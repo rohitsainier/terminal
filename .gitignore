@@ -1,0 +1,32 @@
+# Node
+node_modules/
+dist/
+
+# Rust
+src-tauri/target/
+src-tauri/gen/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Build outputs
+*.dmg
+*.app
+*.deb
+*.AppImage
+*.msi

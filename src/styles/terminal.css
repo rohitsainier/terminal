@@ -1,0 +1,40 @@
+/* ─── Terminal Specific ──────────────── */
+
+.terminal-instance .xterm {
+  padding: 8px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--accent-dim);
+  border-radius: 3px;
+}
+
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* ─── Cursor Styles ──────────────────── */
+
+.terminal-instance .xterm-cursor-layer {
+  filter: drop-shadow(0 0 3px var(--glow-color));
+}
+
+/* ─── Selection ──────────────────────── */
+
+.terminal-instance .xterm-selection div {
+  background: var(--selection) !important;
+}
+
+/* ─── Links ──────────────────────────── */
+
+.terminal-instance .xterm-underline {
+  text-decoration-color: var(--accent);
+}

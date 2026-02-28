@@ -1,0 +1,401 @@
+/* ─── Glow Effect ────────────────────── */
+
+.glow-enabled .xterm-rows span {
+  text-shadow: 0 0 4px var(--glow-color);
+}
+
+.glow-enabled .tab.active {
+  text-shadow: 0 0 8px var(--glow-color);
+}
+
+.glow-enabled .status-indicator {
+  text-shadow: 0 0 10px var(--glow-color);
+}
+
+/* ─── CRT Animations ────────────────── */
+
+@keyframes crt-flicker {
+  0% { opacity: 0; }
+  5% { opacity: 0.02; }
+  10% { opacity: 0; }
+  15% { opacity: 0.03; }
+  20% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+/* ─── Hologram Sweep ─────────────────── */
+
+@keyframes hologram-sweep {
+  0% { transform: translateY(-100%); }
+  50% { transform: translateY(100%); }
+  100% { transform: translateY(-100%); }
+}
+
+/* ─── Boot Animation ─────────────────── */
+
+@keyframes boot-text {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.app {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* ─── Sidebar Styles ─────────────────── */
+
+.sidebar {
+  width: 240px;
+  height: 100%;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sidebar-close {
+  cursor: pointer;
+  opacity: 0.4;
+  font-size: 18px;
+}
+
+.sidebar-close:hover {
+  opacity: 1;
+}
+
+.sidebar-nav {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 4px;
+  gap: 2px;
+}
+
+.sidebar-nav-btn {
+  flex: 1;
+  padding: 6px 4px;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0.5;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.sidebar-nav-btn.active {
+  opacity: 1;
+  background: var(--tab-active);
+}
+
+.sidebar-nav-btn:hover {
+  opacity: 0.8;
+  background: var(--tab-active);
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.7;
+  transition: all 0.1s;
+}
+
+.sidebar-item:hover {
+  opacity: 1;
+  background: var(--tab-active);
+}
+
+.sidebar-item.active {
+  opacity: 1;
+  background: var(--tab-active);
+  border-left: 2px solid var(--accent);
+}
+
+.sidebar-item-icon {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.sidebar-item-mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+
+.sidebar-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.4;
+  line-height: 1.8;
+}
+
+.sidebar-link {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+/* ─── Snippet Library ────────────────── */
+
+.snippet-library {
+  width: 520px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 0 40px var(--accent-dim), 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.snippet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.snippet-add-btn {
+  padding: 4px 10px;
+  background: var(--tab-active);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.snippet-form {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.snippet-form-row {
+  display: flex;
+  gap: 8px;
+}
+
+.snippet-form-icon {
+  width: 40px;
+  text-align: center;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 16px;
+  outline: none;
+  font-family: sans-serif;
+}
+
+.snippet-form-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  outline: none;
+}
+
+.snippet-form-input.full {
+  width: 100%;
+}
+
+.snippet-form-input:focus {
+  border-color: var(--accent);
+}
+
+.snippet-save-btn {
+  padding: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.snippet-list {
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.snippet-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.snippet-item:hover {
+  background: var(--tab-active);
+}
+
+.snippet-item-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.snippet-item-icon {
+  font-size: 18px;
+}
+
+.snippet-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.snippet-item-name {
+  font-size: 13px;
+}
+
+.snippet-item-cmd {
+  font-size: 11px;
+  opacity: 0.5;
+  color: var(--accent);
+}
+
+.snippet-item-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.snippet-item:hover .snippet-item-actions {
+  opacity: 1;
+}
+
+.snippet-copy,
+.snippet-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.snippet-copy:hover,
+.snippet-delete:hover {
+  background: var(--bg);
+}
+
+.snippet-empty {
+  padding: 30px;
+  text-align: center;
+  font-size: 12px;
+  opacity: 0.4;
+}
+
+/* ─── Autocomplete ───────────────────── */
+
+.autocomplete {
+  position: fixed;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  min-width: 250px;
+  max-width: 400px;
+  z-index: 900;
+}
+
+.autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+  background: var(--tab-active);
+}
+
+.autocomplete-icon {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.autocomplete-text {
+  flex: 1;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.autocomplete-type {
+  font-size: 9px;
+  opacity: 0.3;
+  text-transform: uppercase;
+}
+
+/* ─── Status Bar Extra ───────────────── */
+
+.status-separator {
+  opacity: 0.2;
+}
+
+.status-indicator {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
