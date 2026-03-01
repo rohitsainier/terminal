@@ -1,0 +1,37 @@
+{
+  "name": "Matrix",
+  "background": "#000000",
+  "foreground": "#00ff00",
+  "cursor": "#00ff00",
+  "cursorAccent": "#000000",
+  "selection": "#00ff0033",
+  "border": "#00ff0015",
+  "accent": "#00ff00",
+  "accentDim": "#00ff0044",
+  "panelBackground": "#050505",
+  "tabActive": "#00ff0015",
+  "statusBar": "#000000",
+  "ansi": {
+    "black": "#000000",
+    "red": "#ff0000",
+    "green": "#00ff00",
+    "yellow": "#ffff00",
+    "blue": "#0000ff",
+    "magenta": "#ff00ff",
+    "cyan": "#00ffff",
+    "white": "#aaaaaa",
+    "brightBlack": "#333333",
+    "brightRed": "#ff3333",
+    "brightGreen": "#33ff33",
+    "brightYellow": "#ffff33",
+    "brightBlue": "#3333ff",
+    "brightMagenta": "#ff33ff",
+    "brightCyan": "#33ffff",
+    "brightWhite": "#ffffff"
+  },
+  "effects": {
+    "glowColor": "#00ff00",
+    "scanlineColor": "#00ff0008",
+    "particleColor": "#00ff00"
+  }
+}

@@ -399,3 +399,335 @@
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
+/* ─── Settings Panel ─────────────────── */
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(6px);
+}
+
+.settings-panel {
+  width: 560px;
+  max-height: 80vh;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-saved {
+  font-size: 12px;
+  color: #4caf50;
+  animation: fade-in 0.3s;
+}
+
+.settings-save-btn {
+  padding: 5px 14px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 6px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-save-btn:hover {
+  box-shadow: 0 0 12px var(--glow-color);
+}
+
+.settings-close {
+  font-size: 20px;
+  cursor: pointer;
+  opacity: 0.5;
+  padding: 0 4px;
+}
+
+.settings-close:hover {
+  opacity: 1;
+}
+
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+}
+
+.settings-tab {
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: all 0.15s;
+}
+
+.settings-tab:hover {
+  opacity: 0.8;
+}
+
+.settings-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--accent);
+}
+
+.settings-content {
+  padding: 16px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.settings-section {
+  margin-bottom: 20px;
+}
+
+.settings-section h4 {
+  font-size: 13px;
+  margin-bottom: 10px;
+  opacity: 0.9;
+}
+
+.settings-hint {
+  font-size: 11px;
+  opacity: 0.4;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.settings-hint code {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+
+.settings-row label {
+  font-size: 12px;
+  opacity: 0.6;
+  min-width: 80px;
+}
+
+.settings-input {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  outline: none;
+}
+
+.settings-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-select {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+.settings-select:focus {
+  border-color: var(--accent);
+}
+
+.settings-select option {
+  background: var(--panel-bg);
+  color: var(--fg);
+}
+
+.settings-button-group {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.settings-btn-option {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: all 0.15s;
+  text-transform: capitalize;
+}
+
+.settings-btn-option:hover {
+  opacity: 0.8;
+}
+
+.settings-btn-option.active {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--tab-active);
+}
+
+.settings-toggle {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 50px;
+}
+
+.settings-toggle.on {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.settings-toggle.off {
+  background: var(--bg);
+  color: var(--fg);
+  opacity: 0.5;
+}
+
+.settings-range-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.settings-range-row input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+}
+
+.settings-range-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+}
+
+.settings-range-value {
+  font-size: 11px;
+  opacity: 0.5;
+  min-width: 36px;
+  text-align: right;
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* Theme Grid */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  opacity: 0.6;
+}
+
+.theme-card:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.theme-card.active {
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-dim);
+}
+
+.theme-preview {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #111;
+  border: 2px solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+.theme-name {
+  font-size: 10px;
+  text-align: center;
+}

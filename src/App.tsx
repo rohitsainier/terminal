@@ -5,6 +5,8 @@ import TabBar from "./components/TabBar";
 import AIBar from "./components/AIBar";
 import CommandPalette from "./components/CommandPalette";
 import StatusBar from "./components/StatusBar";
+import Settings from "./components/Settings";
+import { getTheme, applyThemeToDOM } from "./themes/ThemeEngine";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
@@ -20,62 +22,45 @@ export default function App() {
   const [activeTab, setActiveTab] = createSignal("");
   const [showAI, setShowAI] = createSignal(false);
   const [showPalette, setShowPalette] = createSignal(false);
+  const [showSettings, setShowSettings] = createSignal(false);
   const [theme, setTheme] = createSignal<any>(null);
   const [config, setConfig] = createSignal<any>(null);
   const [loaded, setLoaded] = createSignal(false);
 
   onMount(async () => {
-    // Load config and theme
+    // Load config from Rust backend
     try {
       const cfg = await invoke("get_config");
       setConfig(cfg);
 
-      const themeData = await invoke("get_theme", {
-        name: (cfg as any).theme || "hacker-green",
-      });
-      setTheme(themeData);
-      applyTheme(themeData);
+      // Try loading theme from backend first
+      try {
+        const themeData = await invoke("get_theme", {
+          name: (cfg as any).theme || "hacker-green",
+        });
+        setTheme(themeData);
+        applyThemeToDOM(themeData);
+      } catch (e) {
+        // Fallback to frontend theme files
+        const localTheme = getTheme((cfg as any).theme || "hacker-green");
+        if (localTheme) {
+          setTheme(localTheme);
+          applyThemeToDOM(localTheme);
+        }
+      }
     } catch (e) {
       console.error("Failed to load config:", e);
-      // Use default theme even if config fails
-      setTheme({
-        background: "#0a0e14",
-        foreground: "#00ff41",
-        cursor: "#00ff41",
-        cursorAccent: "#0a0e14",
-        selection: "#00ff4133",
-        border: "#00ff4122",
-        accent: "#00ff41",
-        accentDim: "#00ff4166",
-        panelBackground: "#0d1117",
-        tabActive: "#00ff4120",
-        statusBar: "#050808",
-        ansi: {
-          black: "#0a0e14",
-          red: "#ff3333",
-          green: "#00ff41",
-          yellow: "#ffff00",
-          blue: "#00d4ff",
-          magenta: "#ff00ff",
-          cyan: "#00ffff",
-          white: "#b3b3b3",
-          brightBlack: "#555555",
-          brightRed: "#ff6666",
-          brightGreen: "#66ff66",
-          brightYellow: "#ffff66",
-          brightBlue: "#66d4ff",
-          brightMagenta: "#ff66ff",
-          brightCyan: "#66ffff",
-          brightWhite: "#ffffff",
-        },
-      });
+      // Use default theme
+      const defaultTheme = getTheme("hacker-green");
+      if (defaultTheme) {
+        setTheme(defaultTheme);
+        applyThemeToDOM(defaultTheme);
+      }
     }
 
-    // Create first tab
     createTab();
     setLoaded(true);
 
-    // Keyboard shortcuts
     document.addEventListener("keydown", handleKeyboard);
   });
 
@@ -86,10 +71,17 @@ export default function App() {
       e.preventDefault();
       setShowAI(!showAI());
       setShowPalette(false);
+      setShowSettings(false);
     } else if (mod && e.key === "p") {
       e.preventDefault();
       setShowPalette(!showPalette());
       setShowAI(false);
+      setShowSettings(false);
+    } else if (mod && e.key === ",") {
+      e.preventDefault();
+      setShowSettings(!showSettings());
+      setShowAI(false);
+      setShowPalette(false);
     } else if (mod && e.key === "t") {
       e.preventDefault();
       createTab();
@@ -99,6 +91,7 @@ export default function App() {
     } else if (e.key === "Escape") {
       setShowAI(false);
       setShowPalette(false);
+      setShowSettings(false);
     }
   }
 
@@ -121,19 +114,24 @@ export default function App() {
     }
   }
 
-  function applyTheme(t: any) {
-    if (!t) return;
-    const root = document.documentElement;
-    root.style.setProperty("--bg", t.background || "#0a0e14");
-    root.style.setProperty("--fg", t.foreground || "#00ff41");
-    root.style.setProperty("--accent", t.accent || "#00ff41");
-    root.style.setProperty("--accent-dim", t.accentDim || "#00ff4166");
-    root.style.setProperty("--panel-bg", t.panelBackground || "#0d1117");
-    root.style.setProperty("--tab-active", t.tabActive || "#00ff4120");
-    root.style.setProperty("--status-bg", t.statusBar || "#050808");
-    root.style.setProperty("--border", t.border || "#00ff4122");
-    root.style.setProperty("--selection", t.selection || "#00ff4133");
-    root.style.setProperty("--glow-color", t.effects?.glowColor || t.accent || "#00ff41");
+  async function handleThemeChange(themeName: string) {
+    try {
+      const themeData = await invoke("get_theme", { name: themeName });
+      setTheme(themeData);
+      applyThemeToDOM(themeData);
+    } catch (e) {
+      const localTheme = getTheme(themeName);
+      if (localTheme) {
+        setTheme(localTheme);
+        applyThemeToDOM(localTheme);
+      }
+    }
+
+    // Reload config
+    try {
+      const cfg = await invoke("get_config");
+      setConfig(cfg);
+    } catch (e) {}
   }
 
   return (
@@ -181,6 +179,14 @@ export default function App() {
 
       <Show when={showPalette()}>
         <CommandPalette onClose={() => setShowPalette(false)} />
+      </Show>
+
+      <Show when={showSettings()}>
+        <Settings
+          onClose={() => setShowSettings(false)}
+          onThemeChange={handleThemeChange}
+          currentConfig={config()}
+        />
       </Show>
     </div>
   );

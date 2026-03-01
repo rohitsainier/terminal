@@ -1,0 +1,37 @@
+{
+  "name": "Hacker Green",
+  "background": "#0a0e14",
+  "foreground": "#00ff41",
+  "cursor": "#00ff41",
+  "cursorAccent": "#0a0e14",
+  "selection": "#00ff4133",
+  "border": "#00ff4122",
+  "accent": "#00ff41",
+  "accentDim": "#00ff4166",
+  "panelBackground": "#0d1117",
+  "tabActive": "#00ff4120",
+  "statusBar": "#050808",
+  "ansi": {
+    "black": "#0a0e14",
+    "red": "#ff3333",
+    "green": "#00ff41",
+    "yellow": "#ffff00",
+    "blue": "#00d4ff",
+    "magenta": "#ff00ff",
+    "cyan": "#00ffff",
+    "white": "#b3b3b3",
+    "brightBlack": "#555555",
+    "brightRed": "#ff6666",
+    "brightGreen": "#66ff66",
+    "brightYellow": "#ffff66",
+    "brightBlue": "#66d4ff",
+    "brightMagenta": "#ff66ff",
+    "brightCyan": "#66ffff",
+    "brightWhite": "#ffffff"
+  },
+  "effects": {
+    "glowColor": "#00ff41",
+    "scanlineColor": "#00ff4108",
+    "particleColor": "#00ff41"
+  }
+}

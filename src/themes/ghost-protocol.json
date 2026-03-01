@@ -1,0 +1,37 @@
+{
+  "name": "Ghost Protocol",
+  "background": "#0b0e14",
+  "foreground": "#c5c8d4",
+  "cursor": "#39bae6",
+  "cursorAccent": "#0b0e14",
+  "selection": "#39bae633",
+  "border": "#39bae622",
+  "accent": "#39bae6",
+  "accentDim": "#39bae644",
+  "panelBackground": "#0f1219",
+  "tabActive": "#39bae620",
+  "statusBar": "#080a0f",
+  "ansi": {
+    "black": "#0b0e14",
+    "red": "#f07178",
+    "green": "#aad94c",
+    "yellow": "#e6b450",
+    "blue": "#39bae6",
+    "magenta": "#d2a6ff",
+    "cyan": "#95e6cb",
+    "white": "#c5c8d4",
+    "brightBlack": "#5c6773",
+    "brightRed": "#ff8f9d",
+    "brightGreen": "#c2ee74",
+    "brightYellow": "#ffd580",
+    "brightBlue": "#73d0ff",
+    "brightMagenta": "#dfbfff",
+    "brightCyan": "#b8ffea",
+    "brightWhite": "#ffffff"
+  },
+  "effects": {
+    "glowColor": "#39bae6",
+    "scanlineColor": "#39bae608",
+    "particleColor": "#39bae6"
+  }
+}

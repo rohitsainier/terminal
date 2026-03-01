@@ -1,0 +1,37 @@
+{
+  "name": "Tron",
+  "background": "#000000",
+  "foreground": "#6fc3df",
+  "cursor": "#ffffff",
+  "cursorAccent": "#000000",
+  "selection": "#6fc3df33",
+  "border": "#6fc3df22",
+  "accent": "#6fc3df",
+  "accentDim": "#6fc3df44",
+  "panelBackground": "#050505",
+  "tabActive": "#6fc3df15",
+  "statusBar": "#000000",
+  "ansi": {
+    "black": "#000000",
+    "red": "#ff3a3a",
+    "green": "#6fc3df",
+    "yellow": "#ffd242",
+    "blue": "#6fc3df",
+    "magenta": "#df740c",
+    "cyan": "#6fc3df",
+    "white": "#b0b0b0",
+    "brightBlack": "#444444",
+    "brightRed": "#ff6666",
+    "brightGreen": "#8fd8ef",
+    "brightYellow": "#ffe066",
+    "brightBlue": "#8fd8ef",
+    "brightMagenta": "#ef8c3c",
+    "brightCyan": "#8fd8ef",
+    "brightWhite": "#ffffff"
+  },
+  "effects": {
+    "glowColor": "#6fc3df",
+    "scanlineColor": "#6fc3df08",
+    "particleColor": "#6fc3df"
+  }
+}

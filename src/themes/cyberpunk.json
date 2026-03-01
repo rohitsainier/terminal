@@ -1,0 +1,37 @@
+{
+  "name": "Cyberpunk",
+  "background": "#0d0221",
+  "foreground": "#ff00ff",
+  "cursor": "#00fff2",
+  "cursorAccent": "#0d0221",
+  "selection": "#ff00ff33",
+  "border": "#ff00ff22",
+  "accent": "#00fff2",
+  "accentDim": "#00fff266",
+  "panelBackground": "#120330",
+  "tabActive": "#ff00ff20",
+  "statusBar": "#080115",
+  "ansi": {
+    "black": "#0d0221",
+    "red": "#ff003c",
+    "green": "#00ff9f",
+    "yellow": "#fff700",
+    "blue": "#00fff2",
+    "magenta": "#ff00ff",
+    "cyan": "#00d4ff",
+    "white": "#c0c0c0",
+    "brightBlack": "#444444",
+    "brightRed": "#ff3366",
+    "brightGreen": "#33ffaa",
+    "brightYellow": "#ffff33",
+    "brightBlue": "#33fff2",
+    "brightMagenta": "#ff33ff",
+    "brightCyan": "#33d4ff",
+    "brightWhite": "#ffffff"
+  },
+  "effects": {
+    "glowColor": "#ff00ff",
+    "scanlineColor": "#ff00ff06",
+    "particleColor": "#00fff2"
+  }
+}

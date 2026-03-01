@@ -1,0 +1,37 @@
+{
+  "name": "Midnight",
+  "background": "#111122",
+  "foreground": "#a0b0cc",
+  "cursor": "#7c8ef5",
+  "cursorAccent": "#111122",
+  "selection": "#7c8ef533",
+  "border": "#7c8ef522",
+  "accent": "#7c8ef5",
+  "accentDim": "#7c8ef544",
+  "panelBackground": "#161630",
+  "tabActive": "#7c8ef520",
+  "statusBar": "#0c0c1a",
+  "ansi": {
+    "black": "#111122",
+    "red": "#ff5577",
+    "green": "#55ffaa",
+    "yellow": "#ffdd77",
+    "blue": "#7c8ef5",
+    "magenta": "#cc77ff",
+    "cyan": "#77ddff",
+    "white": "#a0b0cc",
+    "brightBlack": "#445566",
+    "brightRed": "#ff7799",
+    "brightGreen": "#77ffbb",
+    "brightYellow": "#ffee99",
+    "brightBlue": "#99aaff",
+    "brightMagenta": "#dd99ff",
+    "brightCyan": "#99eeff",
+    "brightWhite": "#ffffff"
+  },
+  "effects": {
+    "glowColor": "#7c8ef5",
+    "scanlineColor": "#7c8ef508",
+    "particleColor": "#7c8ef5"
+  }
+}
