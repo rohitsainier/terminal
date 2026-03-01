@@ -358,6 +358,43 @@ pub fn load_theme(name: &str) -> Result<serde_json::Value, String> {
                 "particleColor": "#6fc3df"
             }
         }),
+        "midnight" => serde_json::json!({
+            "name": "Midnight",
+            "background": "#0f0f1a",
+            "foreground": "#c8c8e8",
+            "cursor": "#7c8ef5",
+            "cursorAccent": "#0f0f1a",
+            "selection": "#7c8ef533",
+            "border": "#7c8ef522",
+            "accent": "#7c8ef5",
+            "accentDim": "#7c8ef544",
+            "panelBackground": "#12122a",
+            "tabActive": "#7c8ef520",
+            "statusBar": "#0a0a15",
+            "ansi": {
+                "black": "#0f0f1a",
+                "red": "#ff5370",
+                "green": "#c3e88d",
+                "yellow": "#ffcb6b",
+                "blue": "#7c8ef5",
+                "magenta": "#c792ea",
+                "cyan": "#89ddff",
+                "white": "#c8c8e8",
+                "brightBlack": "#545480",
+                "brightRed": "#ff8090",
+                "brightGreen": "#d5f0a0",
+                "brightYellow": "#ffd98c",
+                "brightBlue": "#9eaff8",
+                "brightMagenta": "#d4b0f0",
+                "brightCyan": "#a8e8ff",
+                "brightWhite": "#ffffff"
+            },
+            "effects": {
+                "glowColor": "#7c8ef5",
+                "scanlineColor": "#7c8ef508",
+                "particleColor": "#7c8ef5"
+            }
+        }),
         _ => {
             return Err(format!("Theme not found: {}", name));
         }

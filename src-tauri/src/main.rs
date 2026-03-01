@@ -64,6 +64,7 @@ fn main() {
             commands::connect_ssh,
             commands::search_history,
             commands::recent_history,
+            commands::list_ollama_models, 
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

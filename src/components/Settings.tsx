@@ -1,4 +1,4 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, createEffect, onMount, Show, For } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
@@ -15,17 +15,33 @@ export default function Settings(props: Props) {
   // Appearance
   const [theme, setTheme] = createSignal(config()?.theme || "hacker-green");
   const [fontSize, setFontSize] = createSignal(config()?.font_size || 14);
-  const [fontFamily, setFontFamily] = createSignal(config()?.font_family || "JetBrains Mono");
-  const [cursorStyle, setCursorStyle] = createSignal(config()?.cursor_style || "block");
-  const [cursorBlink, setCursorBlink] = createSignal(config()?.cursor_blink ?? true);
+  const [fontFamily, setFontFamily] = createSignal(
+    config()?.font_family || "JetBrains Mono"
+  );
+  const [cursorStyle, setCursorStyle] = createSignal(
+    config()?.cursor_style || "block"
+  );
+  const [cursorBlink, setCursorBlink] = createSignal(
+    config()?.cursor_blink ?? true
+  );
 
   // Effects
   const [glow, setGlow] = createSignal(config()?.effects?.glow ?? true);
-  const [glowIntensity, setGlowIntensity] = createSignal(config()?.effects?.glow_intensity || 0.3);
-  const [crtScanlines, setCrtScanlines] = createSignal(config()?.effects?.crt_scanlines ?? false);
-  const [matrixRain, setMatrixRain] = createSignal(config()?.effects?.matrix_rain ?? false);
-  const [matrixOpacity, setMatrixOpacity] = createSignal(config()?.effects?.matrix_rain_opacity || 0.05);
-  const [particles, setParticles] = createSignal(config()?.effects?.particles_on_keystroke ?? false);
+  const [glowIntensity, setGlowIntensity] = createSignal(
+    config()?.effects?.glow_intensity || 0.3
+  );
+  const [crtScanlines, setCrtScanlines] = createSignal(
+    config()?.effects?.crt_scanlines ?? false
+  );
+  const [matrixRain, setMatrixRain] = createSignal(
+    config()?.effects?.matrix_rain ?? false
+  );
+  const [matrixOpacity, setMatrixOpacity] = createSignal(
+    config()?.effects?.matrix_rain_opacity || 0.05
+  );
+  const [particles, setParticles] = createSignal(
+    config()?.effects?.particles_on_keystroke ?? false
+  );
 
   // AI Provider
   const [aiType, setAiType] = createSignal(getAIType());
@@ -34,7 +50,38 @@ export default function Settings(props: Props) {
   const [openaiKey, setOpenaiKey] = createSignal(getOpenAIKey());
   const [openaiModel, setOpenaiModel] = createSignal(getOpenAIModel());
   const [anthropicKey, setAnthropicKey] = createSignal(getAnthropicKey());
-  const [anthropicModel, setAnthropicModel] = createSignal(getAnthropicModel());
+  const [anthropicModel, setAnthropicModel] = createSignal(
+    getAnthropicModel()
+  );
+
+  // ── Dynamic Ollama models ──
+  const [ollamaModels, setOllamaModels] = createSignal<string[]>([]);
+  const [modelsLoading, setModelsLoading] = createSignal(false);
+  const [modelsError, setModelsError] = createSignal("");
+
+  // Auto-fetch when switching to Ollama settings
+  createEffect(() => {
+    if (activeTab() === "ai" && aiType() === "ollama") {
+      fetchOllamaModels();
+    }
+  });
+
+  async function fetchOllamaModels() {
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const models = (await invoke("list_ollama_models", {
+        baseUrl: ollamaUrl(),
+      })) as string[];
+      setOllamaModels(models);
+    } catch (e: any) {
+      setModelsError(e.toString());
+      // Static fallback so dropdown isn't empty
+      setOllamaModels([]);
+    } finally {
+      setModelsLoading(false);
+    }
+  }
 
   function getAIType(): string {
     const p = config()?.ai_provider;
@@ -44,12 +91,13 @@ export default function Settings(props: Props) {
     if (p.Anthropic) return "anthropic";
     return "ollama";
   }
-
   function getOllamaModel(): string {
     return config()?.ai_provider?.Ollama?.model || "llama3.2";
   }
   function getOllamaUrl(): string {
-    return config()?.ai_provider?.Ollama?.base_url || "http://localhost:11434";
+    return (
+      config()?.ai_provider?.Ollama?.base_url || "http://localhost:11434"
+    );
   }
   function getOpenAIKey(): string {
     return config()?.ai_provider?.OpenAI?.api_key || "";
@@ -61,18 +109,26 @@ export default function Settings(props: Props) {
     return config()?.ai_provider?.Anthropic?.api_key || "";
   }
   function getAnthropicModel(): string {
-    return config()?.ai_provider?.Anthropic?.model || "claude-3-5-sonnet-20241022";
+    return (
+      config()?.ai_provider?.Anthropic?.model ||
+      "claude-3-5-sonnet-20241022"
+    );
   }
 
   async function saveConfig() {
     let aiProvider: any = null;
-
     if (aiType() === "ollama") {
-      aiProvider = { Ollama: { model: ollamaModel(), base_url: ollamaUrl() } };
+      aiProvider = {
+        Ollama: { model: ollamaModel(), base_url: ollamaUrl() },
+      };
     } else if (aiType() === "openai") {
-      aiProvider = { OpenAI: { api_key: openaiKey(), model: openaiModel() } };
+      aiProvider = {
+        OpenAI: { api_key: openaiKey(), model: openaiModel() },
+      };
     } else if (aiType() === "anthropic") {
-      aiProvider = { Anthropic: { api_key: anthropicKey(), model: anthropicModel() } };
+      aiProvider = {
+        Anthropic: { api_key: anthropicKey(), model: anthropicModel() },
+      };
     }
 
     const newConfig = {
@@ -112,8 +168,6 @@ export default function Settings(props: Props) {
       await invoke("set_config", { config: newConfig });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-
-      // Apply theme immediately
       props.onThemeChange(theme());
     } catch (e) {
       console.error("Failed to save config:", e);
@@ -146,7 +200,6 @@ export default function Settings(props: Props) {
   return (
     <div class="settings-overlay" onClick={() => props.onClose()}>
       <div class="settings-panel" onClick={(e) => e.stopPropagation()}>
-
         {/* Header */}
         <div class="settings-header">
           <span>⚙️ Settings</span>
@@ -187,8 +240,7 @@ export default function Settings(props: Props) {
 
         {/* Content */}
         <div class="settings-content">
-
-          {/* Appearance Tab */}
+          {/* ── Appearance Tab ── */}
           <Show when={activeTab() === "appearance"}>
             <div class="settings-section">
               <h4>Theme</h4>
@@ -202,10 +254,7 @@ export default function Settings(props: Props) {
                       class="theme-preview"
                       style={{ "border-color": t.color }}
                     >
-                      <div
-                        class="theme-dot"
-                        style={{ background: t.color }}
-                      />
+                      <div class="theme-dot" style={{ background: t.color }} />
                     </div>
                     <span class="theme-name">{t.name}</span>
                   </div>
@@ -236,7 +285,9 @@ export default function Settings(props: Props) {
                     max="24"
                     step="1"
                     value={fontSize()}
-                    onInput={(e) => setFontSize(Number(e.currentTarget.value))}
+                    onInput={(e) =>
+                      setFontSize(Number(e.currentTarget.value))
+                    }
                   />
                   <span class="settings-range-value">{fontSize()}px</span>
                 </div>
@@ -270,7 +321,7 @@ export default function Settings(props: Props) {
             </div>
           </Show>
 
-          {/* Effects Tab */}
+          {/* ── Effects Tab ── */}
           <Show when={activeTab() === "effects"}>
             <div class="settings-section">
               <h4>Text Glow</h4>
@@ -293,9 +344,13 @@ export default function Settings(props: Props) {
                       max="1.0"
                       step="0.1"
                       value={glowIntensity()}
-                      onInput={(e) => setGlowIntensity(Number(e.currentTarget.value))}
+                      onInput={(e) =>
+                        setGlowIntensity(Number(e.currentTarget.value))
+                      }
                     />
-                    <span class="settings-range-value">{glowIntensity()}</span>
+                    <span class="settings-range-value">
+                      {glowIntensity()}
+                    </span>
                   </div>
                 </div>
               </Show>
@@ -335,9 +390,13 @@ export default function Settings(props: Props) {
                       max="0.2"
                       step="0.01"
                       value={matrixOpacity()}
-                      onInput={(e) => setMatrixOpacity(Number(e.currentTarget.value))}
+                      onInput={(e) =>
+                        setMatrixOpacity(Number(e.currentTarget.value))
+                      }
                     />
-                    <span class="settings-range-value">{matrixOpacity()}</span>
+                    <span class="settings-range-value">
+                      {matrixOpacity()}
+                    </span>
                   </div>
                 </div>
               </Show>
@@ -357,7 +416,7 @@ export default function Settings(props: Props) {
             </div>
           </Show>
 
-          {/* AI Tab */}
+          {/* ── AI Tab ── */}
           <Show when={activeTab() === "ai"}>
             <div class="settings-section">
               <h4>AI Provider</h4>
@@ -369,39 +428,25 @@ export default function Settings(props: Props) {
                       class={`settings-btn-option ${aiType() === type ? "active" : ""}`}
                       onClick={() => setAiType(type)}
                     >
-                      {type === "ollama" ? "🦙 Ollama" : type === "openai" ? "🤖 OpenAI" : "🧠 Claude"}
+                      {type === "ollama"
+                        ? "🦙 Ollama"
+                        : type === "openai"
+                          ? "🤖 OpenAI"
+                          : "🧠 Claude"}
                     </button>
                   ))}
                 </div>
               </div>
             </div>
 
-            {/* Ollama Settings */}
+            {/* ── Ollama ── */}
             <Show when={aiType() === "ollama"}>
               <div class="settings-section">
                 <h4>🦙 Ollama Settings</h4>
                 <p class="settings-hint">
                   Free & local. Run <code>ollama serve</code> first.
                 </p>
-                <div class="settings-row">
-                  <label>Model</label>
-                  <select
-                    class="settings-select"
-                    value={ollamaModel()}
-                    onChange={(e) => setOllamaModel(e.currentTarget.value)}
-                  >
-                    <option value="llama3.2">llama3.2 (3B, fast)</option>
-                    <option value="llama3.2:1b">llama3.2:1b (1B, fastest)</option>
-                    <option value="llama3.1">llama3.1 (8B, smart)</option>
-                    <option value="llama3.1:70b">llama3.1:70b (70B, smartest)</option>
-                    <option value="codellama">codellama (code focused)</option>
-                    <option value="mistral">mistral (7B)</option>
-                    <option value="mixtral">mixtral (8x7B)</option>
-                    <option value="deepseek-coder">deepseek-coder</option>
-                    <option value="qwen2.5-coder">qwen2.5-coder</option>
-                    <option value="phi3">phi3 (3.8B, fast)</option>
-                  </select>
-                </div>
+
                 <div class="settings-row">
                   <label>URL</label>
                   <input
@@ -412,10 +457,81 @@ export default function Settings(props: Props) {
                     placeholder="http://localhost:11434"
                   />
                 </div>
+
+                <div class="settings-row">
+                  <label>Model</label>
+                  <div style={{ flex: "1", display: "flex", gap: "6px" }}>
+                    <Show
+                      when={ollamaModels().length > 0}
+                      fallback={
+                        <input
+                          class="settings-input"
+                          type="text"
+                          value={ollamaModel()}
+                          onInput={(e) =>
+                            setOllamaModel(e.currentTarget.value)
+                          }
+                          placeholder="e.g. llama3.2"
+                        />
+                      }
+                    >
+                      <select
+                        class="settings-select"
+                        value={ollamaModel()}
+                        onChange={(e) =>
+                          setOllamaModel(e.currentTarget.value)
+                        }
+                      >
+                        <For each={ollamaModels()}>
+                          {(m) => (
+                            <option value={m}>{m}</option>
+                          )}
+                        </For>
+                      </select>
+                    </Show>
+                    <button
+                      class="settings-btn-option"
+                      style={{
+                        flex: "none",
+                        width: "36px",
+                        opacity: modelsLoading() ? "0.3" : "0.7",
+                      }}
+                      onClick={fetchOllamaModels}
+                      disabled={modelsLoading()}
+                      title="Refresh models"
+                    >
+                      🔄
+                    </button>
+                  </div>
+                </div>
+
+                <Show when={modelsLoading()}>
+                  <p class="settings-hint">
+                    ⏳ Fetching models from Ollama...
+                  </p>
+                </Show>
+
+                <Show when={modelsError()}>
+                  <p
+                    class="settings-hint"
+                    style={{ color: "#ff6b6b", opacity: "0.8" }}
+                  >
+                    ⚠️ {modelsError()}
+                    <br />
+                    Type model name manually above, or start Ollama and hit 🔄
+                  </p>
+                </Show>
+
+                <Show when={!modelsLoading() && !modelsError() && ollamaModels().length === 0}>
+                  <p class="settings-hint">
+                    No models found. Install one:{" "}
+                    <code>ollama pull llama3.2</code>
+                  </p>
+                </Show>
               </div>
             </Show>
 
-            {/* OpenAI Settings */}
+            {/* ── OpenAI ── */}
             <Show when={aiType() === "openai"}>
               <div class="settings-section">
                 <h4>🤖 OpenAI Settings</h4>
@@ -439,16 +555,17 @@ export default function Settings(props: Props) {
                     value={openaiModel()}
                     onChange={(e) => setOpenaiModel(e.currentTarget.value)}
                   >
-                    <option value="gpt-4o-mini">gpt-4o-mini (cheap, fast)</option>
-                    <option value="gpt-4o">gpt-4o (smart)</option>
+                    <option value="gpt-4o-mini">gpt-4o-mini</option>
+                    <option value="gpt-4o">gpt-4o</option>
                     <option value="gpt-4-turbo">gpt-4-turbo</option>
-                    <option value="gpt-3.5-turbo">gpt-3.5-turbo (cheapest)</option>
+                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                    <option value="o3-mini">o3-mini</option>
                   </select>
                 </div>
               </div>
             </Show>
 
-            {/* Anthropic Settings */}
+            {/* ── Anthropic ── */}
             <Show when={aiType() === "anthropic"}>
               <div class="settings-section">
                 <h4>🧠 Anthropic (Claude) Settings</h4>
@@ -461,7 +578,9 @@ export default function Settings(props: Props) {
                     class="settings-input"
                     type="password"
                     value={anthropicKey()}
-                    onInput={(e) => setAnthropicKey(e.currentTarget.value)}
+                    onInput={(e) =>
+                      setAnthropicKey(e.currentTarget.value)
+                    }
                     placeholder="sk-ant-..."
                   />
                 </div>
@@ -470,12 +589,22 @@ export default function Settings(props: Props) {
                   <select
                     class="settings-select"
                     value={anthropicModel()}
-                    onChange={(e) => setAnthropicModel(e.currentTarget.value)}
+                    onChange={(e) =>
+                      setAnthropicModel(e.currentTarget.value)
+                    }
                   >
-                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (latest)</option>
-                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                    <option value="claude-3-haiku-20240307">Claude 3 Haiku (fast, cheap)</option>
-                    <option value="claude-3-opus-20240229">Claude 3 Opus (smartest)</option>
+                    <option value="claude-sonnet-4-20250514">
+                      Claude Sonnet 4 (latest)
+                    </option>
+                    <option value="claude-3-5-sonnet-20241022">
+                      Claude 3.5 Sonnet
+                    </option>
+                    <option value="claude-3-haiku-20240307">
+                      Claude 3 Haiku (fast)
+                    </option>
+                    <option value="claude-3-opus-20240229">
+                      Claude 3 Opus (smartest)
+                    </option>
                   </select>
                 </div>
               </div>

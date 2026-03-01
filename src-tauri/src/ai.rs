@@ -270,3 +270,38 @@ Suggest the corrected command. Respond in JSON:
             .ok_or_else(|| "No content in Anthropic response".to_string())
     }
 }
+
+/// Fetch installed models from a running Ollama instance
+    pub async fn list_ollama_models(base_url: &str) -> Result<Vec<String>, String> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("HTTP client error: {}", e))?;
+
+        let resp = client
+            .get(format!("{}/api/tags", base_url))
+            .send()
+            .await
+            .map_err(|e| {
+                format!(
+                    "Cannot connect to Ollama at {}. Is it running? ({})",
+                    base_url, e
+                )
+            })?;
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response from Ollama: {}", e))?;
+
+        let models = data["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(models)
+    }

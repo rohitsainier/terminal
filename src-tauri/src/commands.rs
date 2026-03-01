@@ -253,3 +253,11 @@ pub fn recent_history(
     let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
     Ok(manager.recent_history(limit.unwrap_or(50)))
 }
+
+#[tauri::command]
+pub async fn list_ollama_models(
+    base_url: Option<String>,
+) -> Result<Vec<String>, String> {
+    let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+    crate::ai::list_ollama_models(&url).await
+}
