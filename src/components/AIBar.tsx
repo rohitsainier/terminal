@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { useAI } from "../hooks/useAI";
 
 interface Props {
   sessionId: string;
@@ -8,51 +9,40 @@ interface Props {
 
 export default function AIBar(props: Props) {
   const [query, setQuery] = createSignal("");
-  const [result, setResult] = createSignal<any>(null);
-  const [loading, setLoading] = createSignal(false);
-  const [error, setError] = createSignal("");
+  const ai = useAI();
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
     if (!query().trim()) return;
-
-    setLoading(true);
-    setError("");
-    setResult(null);
-
-    try {
-      const response = await invoke("ai_translate_command", {
-        query: query(),
-        cwd: "~",
-      });
-      setResult(response);
-    } catch (err: any) {
-      setError(err.toString());
-    } finally {
-      setLoading(false);
-    }
+    await ai.translate(query(), "~");
   }
 
   async function runCommand() {
-    if (!result()) return;
+    const r = ai.result();
+    if (!r) return;
     await invoke("write_to_session", {
       id: props.sessionId,
-      data: result().command + "\n",
+      data: r.command + "\n",
     });
     props.onClose();
   }
 
   async function explainCommand() {
-    if (!result()) return;
-    try {
-      const explanation = await invoke("ai_explain_command", {
-        command: result().command,
-      });
-      setResult({ ...result(), explanation });
-    } catch (err: any) {
-      setError(err.toString());
+    const r = ai.result();
+    if (!r) return;
+    const explanation = await ai.explain(r.command);
+    if (explanation) {
+      // Merge explanation into existing result
+      ai.result(); // trigger reactivity read
+      // We need to update result — use the suggestFix pattern or manually
+      // Since useAI doesn't expose setResult, let's add a small workaround:
+      // Actually the explain() doesn't update result, it returns the string.
+      // Let's show it inline.
+      setExplanationText(explanation);
     }
   }
+
+  const [explanationText, setExplanationText] = createSignal("");
 
   return (
     <div class="ai-overlay" onClick={() => props.onClose()}>
@@ -74,34 +64,37 @@ export default function AIBar(props: Props) {
           />
         </form>
 
-        {loading() && (
+        {ai.loading() && (
           <div class="ai-loading">
             <span class="spinner" /> Thinking...
           </div>
         )}
 
-        {error() && <div class="ai-error">❌ {error()}</div>}
+        {ai.error() && <div class="ai-error">❌ {ai.error()}</div>}
 
-        {result() && (
+        {ai.result() && (
           <div class="ai-result">
             <div class="ai-command">
-              <code>{result().command}</code>
-              {result().dangerous && (
+              <code>{ai.result()!.command}</code>
+              {ai.result()!.dangerous && (
                 <span class="ai-danger">
-                  ⚠️ {result().danger_reason || "Potentially dangerous"}
+                  ⚠️ {ai.result()!.danger_reason || "Potentially dangerous"}
                 </span>
               )}
             </div>
 
-            <div class="ai-explanation">{result().explanation}</div>
+            <div class="ai-explanation">
+              {explanationText() || ai.result()!.explanation}
+            </div>
 
             <div class="ai-actions">
               <button class="btn-run" onClick={runCommand}>
                 ▶ Run
               </button>
-              <button class="btn-copy" onClick={() => {
-                navigator.clipboard.writeText(result().command);
-              }}>
+              <button
+                class="btn-copy"
+                onClick={() => navigator.clipboard.writeText(ai.result()!.command)}
+              >
                 📋 Copy
               </button>
               <button class="btn-explain" onClick={explainCommand}>

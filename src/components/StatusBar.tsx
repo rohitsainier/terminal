@@ -9,6 +9,7 @@ interface Tab {
 interface Props {
   activeTab: Tab | undefined;
   theme: string | undefined;
+  onShowShortcuts: () => void;
 }
 
 export default function StatusBar(props: Props) {
@@ -33,10 +34,9 @@ export default function StatusBar(props: Props) {
 
   onCleanup(() => clearInterval(timer));
 
-  const os =
-    navigator.platform.includes("Mac")
-      ? "macOS"
-      : navigator.platform.includes("Win")
+  const os = navigator.platform.includes("Mac")
+    ? "macOS"
+    : navigator.platform.includes("Win")
       ? "Windows"
       : "Linux";
 
@@ -54,6 +54,14 @@ export default function StatusBar(props: Props) {
         <span>{os}</span>
         <span class="status-separator">│</span>
         <span>{time()}</span>
+        <span class="status-separator">│</span>
+        <span
+          class="status-info-btn"
+          onClick={() => props.onShowShortcuts()}
+          title="Keyboard Shortcuts"
+        >
+          ℹ️
+        </span>
       </div>
     </div>
   );

@@ -12,7 +12,9 @@ import CRTEffect from "./effects/CRTEffect";
 import GlowEffect from "./effects/GlowEffect";
 import MatrixRain from "./effects/MatrixRain";
 import ParticleEngine from "./effects/ParticleEngine";
-import { getTheme, applyThemeToDOM } from "./themes/ThemeEngine";
+import HologramEffect from "./effects/HologramEffect";
+import { useTheme } from "./hooks/useTheme";
+import ShortcutHelp from "./components/ShortcutHelp";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
@@ -31,44 +33,32 @@ export default function App() {
   const [showSettings, setShowSettings] = createSignal(false);
   const [showSidebar, setShowSidebar] = createSignal(false);
   const [showSnippets, setShowSnippets] = createSignal(false);
-  const [theme, setTheme] = createSignal<any>(null);
   const [config, setConfig] = createSignal<any>(null);
   const [loaded, setLoaded] = createSignal(false);
+  const [showShortcuts, setShowShortcuts] = createSignal(false);
+
+  // ── Theme via hook ──
+  const theme = useTheme();
 
   onMount(async () => {
+    // Load config
     try {
       const cfg = await invoke("get_config");
       setConfig(cfg);
-
-      try {
-        const themeData = await invoke("get_theme", {
-          name: (cfg as any).theme || "hacker-green",
-        });
-        setTheme(themeData);
-        applyThemeToDOM(themeData);
-      } catch (_) {
-        const localTheme = getTheme((cfg as any).theme || "hacker-green");
-        if (localTheme) {
-          setTheme(localTheme);
-          applyThemeToDOM(localTheme);
-        }
-      }
+      await theme.loadTheme((cfg as any).theme || "hacker-green");
     } catch (_) {
-      const defaultTheme = getTheme("hacker-green");
-      if (defaultTheme) {
-        setTheme(defaultTheme);
-        applyThemeToDOM(defaultTheme);
-      }
+      await theme.loadTheme("hacker-green");
     }
 
     createTab();
     setLoaded(true);
-
     document.addEventListener("keydown", handleKeyboard);
   });
 
   onCleanup(() => {
     document.removeEventListener("keydown", handleKeyboard);
+    // Save history on app close
+    invoke("save_history").catch(() => {});
   });
 
   function handleKeyboard(e: KeyboardEvent) {
@@ -77,15 +67,15 @@ export default function App() {
     if (mod && e.key === "k") {
       e.preventDefault();
       closeAllOverlays();
-      setShowAI(!showAI());
+      setShowAI((v) => !v);
     } else if (mod && e.key === "p") {
       e.preventDefault();
       closeAllOverlays();
-      setShowPalette(!showPalette());
+      setShowPalette((v) => !v);
     } else if (mod && e.key === ",") {
       e.preventDefault();
       closeAllOverlays();
-      setShowSettings(!showSettings());
+      setShowSettings((v) => !v);
     } else if (mod && e.key === "t") {
       e.preventDefault();
       createTab();
@@ -95,12 +85,20 @@ export default function App() {
     } else if (mod && e.key === "b") {
       e.preventDefault();
       setShowSidebar((s) => !s);
-    } else if (mod && e.shiftKey && e.key === "L") {
+    } else if (mod && e.shiftKey && (e.key === "L" || e.key === "l")) {
       e.preventDefault();
       closeAllOverlays();
-      setShowSnippets(!showSnippets());
+      setShowSnippets((v) => !v);
     } else if (e.key === "Escape") {
       closeAllOverlays();
+      setShowShortcuts(false);
+    } else if (e.key === "?" && !e.metaKey && !e.ctrlKey && !showAI() && !showPalette() && !showSettings() && !showSnippets()) {
+      // Only trigger if no overlay is open and not typing in an input
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag !== "input" && tag !== "textarea" && tag !== "select") {
+        e.preventDefault();
+        setShowShortcuts((v) => !v);
+      }
     }
   }
 
@@ -109,7 +107,8 @@ export default function App() {
     setShowPalette(false);
     setShowSettings(false);
     setShowSnippets(false);
-  }
+    setShowShortcuts(false);
+}
 
   function createTab() {
     const id = crypto.randomUUID();
@@ -125,30 +124,31 @@ export default function App() {
     if (activeTab() === id && remaining.length > 0) {
       setActiveTab(remaining[remaining.length - 1].id);
     }
-    if (remaining.length === 0) {
-      createTab();
-    }
+    if (remaining.length === 0) createTab();
   }
 
   async function handleThemeChange(themeName: string) {
-    try {
-      const themeData = await invoke("get_theme", { name: themeName });
-      setTheme(themeData);
-      applyThemeToDOM(themeData);
-    } catch (_) {
-      const localTheme = getTheme(themeName);
-      if (localTheme) {
-        setTheme(localTheme);
-        applyThemeToDOM(localTheme);
-      }
-    }
+    await theme.loadTheme(themeName);
     try {
       const cfg = await invoke("get_config");
       setConfig(cfg);
     } catch (_) {}
   }
 
-  // ── Toggle an effect, save config, re-render ──
+  // ── Write to active terminal ──
+  function writeToActiveSession(data: string) {
+    invoke("write_to_session", { id: activeTab(), data }).catch(() => {});
+  }
+
+  // ── SSH connect ──
+  function handleSSHConnect(sshId: string) {
+    invoke("connect_ssh", { id: sshId, sessionId: activeTab() }).catch(
+      (e: any) => console.error("SSH connect error:", e)
+    );
+    setShowSidebar(false);
+  }
+
+  // ── Toggle effects ──
   async function toggleEffect(effect: string) {
     const cfg = config();
     if (!cfg) return;
@@ -167,6 +167,9 @@ export default function App() {
       case "particles":
         fx.particles_on_keystroke = !fx.particles_on_keystroke;
         break;
+      case "hologram":
+        fx.hologram = !fx.hologram;
+        break;
     }
 
     const newConfig = { ...cfg, effects: fx };
@@ -174,47 +177,39 @@ export default function App() {
     try {
       await invoke("set_config", { config: newConfig });
     } catch (e) {
-      console.error("Failed to save config:", e);
+      console.error("Save config error:", e);
     }
   }
 
   // ── Command Palette action router ──
   function handlePaletteAction(actionId: string) {
-    if (actionId === "new-tab") {
-      createTab();
-    } else if (actionId === "ai-bar") {
-      setShowAI(true);
-    } else if (actionId === "snippets") {
-      setShowSnippets(true);
-    } else if (actionId === "settings") {
-      setShowSettings(true);
-    } else if (actionId === "toggle-sidebar") {
-      setShowSidebar((s) => !s);
-    } else if (actionId === "toggle-crt") {
-      toggleEffect("crt");
-    } else if (actionId === "toggle-glow") {
-      toggleEffect("glow");
-    } else if (actionId === "toggle-matrix") {
-      toggleEffect("matrix");
-    } else if (actionId === "toggle-particles") {
-      toggleEffect("particles");
-    } else if (actionId.startsWith("theme-")) {
-      const name = actionId.replace("theme-", "");
-      handleThemeChange(name);
+    if (actionId === "new-tab") createTab();
+    else if (actionId === "ai-bar") setShowAI(true);
+    else if (actionId === "snippets") setShowSnippets(true);
+    else if (actionId === "settings") setShowSettings(true);
+    else if (actionId === "toggle-sidebar") setShowSidebar((s) => !s);
+    else if (actionId === "toggle-crt") toggleEffect("crt");
+    else if (actionId === "toggle-glow") toggleEffect("glow");
+    else if (actionId === "toggle-matrix") toggleEffect("matrix");
+    else if (actionId === "toggle-particles") toggleEffect("particles");
+    else if (actionId === "toggle-hologram") toggleEffect("hologram");
+    else if (actionId.startsWith("theme-")) {
+      handleThemeChange(actionId.replace("theme-", ""));
     }
   }
 
-  // Convenience accessors for effects config
   const fx = () => config()?.effects || {};
   const themeAccent = () =>
-    theme()?.accent || theme()?.effects?.glowColor || "#00ff41";
+    theme.currentTheme()?.accent ||
+    theme.currentTheme()?.effects?.glowColor ||
+    "#00ff41";
 
   return (
     <div class="app">
       {/* ── Visual Effects ── */}
       <Show when={fx().matrix_rain}>
         <MatrixRain
-          color={theme()?.effects?.particleColor || themeAccent()}
+          color={theme.currentTheme()?.effects?.particleColor || themeAccent()}
           opacity={fx().matrix_rain_opacity || 0.05}
         />
       </Show>
@@ -226,14 +221,19 @@ export default function App() {
       />
 
       <GlowEffect
-        color={theme()?.effects?.glowColor || themeAccent()}
+        color={theme.currentTheme()?.effects?.glowColor || themeAccent()}
         intensity={fx().glow_intensity || 0.3}
         enabled={fx().glow ?? false}
       />
 
       <ParticleEngine
-        color={theme()?.effects?.particleColor || themeAccent()}
+        color={theme.currentTheme()?.effects?.particleColor || themeAccent()}
         enabled={fx().particles_on_keystroke ?? false}
+      />
+
+      <HologramEffect
+        color={themeAccent()}
+        enabled={fx().hologram ?? false}
       />
 
       {/* ── Chrome ── */}
@@ -246,15 +246,16 @@ export default function App() {
       />
 
       <div style={{ display: "flex", flex: "1", overflow: "hidden" }}>
-        {/* ── Sidebar ── */}
-        <Show when={showSidebar()}>
-          <Sidebar
-            visible={true}
-            onClose={() => setShowSidebar(false)}
-          />
-        </Show>
+        <Sidebar
+          visible={showSidebar()}
+          onClose={() => setShowSidebar(false)}
+          activeSessionId={activeTab()}
+          tabs={tabs()}
+          onSnippetRun={(cmd) => writeToActiveSession(cmd + "\n")}
+          onSSHConnect={handleSSHConnect}
+          onTabSelect={setActiveTab}
+        />
 
-        {/* ── Terminal Panes ── */}
         <div class="terminal-container">
           <Show when={loaded()}>
             <For each={tabs()}>
@@ -267,7 +268,7 @@ export default function App() {
                 >
                   <Terminal
                     sessionId={tab.id}
-                    theme={theme()}
+                    theme={theme.currentTheme()}
                     config={config()}
                   />
                 </div>
@@ -279,12 +280,16 @@ export default function App() {
 
       <StatusBar
         activeTab={tabs().find((t) => t.id === activeTab())}
-        theme={theme()?.name || config()?.theme || "hacker-green"}
+        theme={theme.currentTheme()?.name || theme.themeName()}
+        onShowShortcuts={() => setShowShortcuts((v) => !v)}
       />
 
       {/* ── Overlays ── */}
       <Show when={showAI()}>
-        <AIBar sessionId={activeTab()} onClose={() => setShowAI(false)} />
+        <AIBar
+          sessionId={activeTab()}
+          onClose={() => setShowAI(false)}
+        />
       </Show>
 
       <Show when={showPalette()}>
@@ -298,7 +303,6 @@ export default function App() {
         <Settings
           onClose={() => {
             setShowSettings(false);
-            // Reload config so effects/font changes take effect
             invoke("get_config")
               .then((cfg) => setConfig(cfg))
               .catch(() => {});
@@ -312,6 +316,13 @@ export default function App() {
         <SnippetLibrary
           sessionId={activeTab()}
           onClose={() => setShowSnippets(false)}
+        />
+      </Show>
+
+      <Show when={showShortcuts()}>
+        <ShortcutHelp
+          visible={true}
+          onClose={() => setShowShortcuts(false)}
         />
       </Show>
     </div>

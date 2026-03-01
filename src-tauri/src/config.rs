@@ -29,6 +29,8 @@ pub struct EffectsConfig {
     pub matrix_rain_opacity: f32,
     pub particles_on_keystroke: bool,
     pub screen_flicker: bool,
+    #[serde(default)]
+    pub hologram: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -61,6 +63,7 @@ impl Default for AppConfig {
                 matrix_rain_opacity: 0.05,
                 particles_on_keystroke: false,
                 screen_flicker: false,
+                hologram: false,
             },
             ai_provider: Some(AIProvider::Ollama {
                 model: "llama3.2".into(),

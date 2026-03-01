@@ -43,28 +43,50 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
+            // PTY
             commands::create_session,
             commands::write_to_session,
             commands::resize_session,
             commands::close_session,
+            // AI
             commands::ai_translate_command,
             commands::ai_explain_command,
             commands::ai_suggest_fix,
+            commands::list_ollama_models,
+            // Config / Theme
             commands::get_config,
             commands::set_config,
             commands::list_themes,
             commands::get_theme,
+            // Snippets
             commands::list_snippets,
             commands::add_snippet,
             commands::delete_snippet,
             commands::run_snippet,
+            commands::search_snippets,
+            commands::get_snippet_categories,
+            commands::import_snippets,
+            commands::export_snippets,
+            // SSH
             commands::list_ssh_connections,
             commands::add_ssh_connection,
             commands::delete_ssh_connection,
             commands::connect_ssh,
+            commands::check_ssh_reachable,
+            commands::get_known_hosts,
+            // Sessions / History
+            commands::list_active_sessions,
+            commands::update_session_info,
+            commands::add_history_entry,
             commands::search_history,
             commands::recent_history,
-            commands::list_ollama_models, 
+            commands::unique_commands,
+            commands::most_used_commands,
+            commands::save_all_history,
+            commands::clear_all_history,
+            // Terminal Utilities
+            commands::list_available_shells,
+            commands::complete_path,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

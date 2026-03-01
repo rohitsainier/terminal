@@ -1,4 +1,4 @@
-import { onMount, onCleanup } from "solid-js";
+import { createEffect, onCleanup } from "solid-js";
 
 interface Props {
   color: string;
@@ -7,13 +7,15 @@ interface Props {
 }
 
 export default function GlowEffect(props: Props) {
-  onMount(() => {
-    if (!props.enabled) return;
-
+  createEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty("--glow-color", props.color);
-    root.style.setProperty("--glow-intensity", props.intensity.toString());
-    document.body.classList.add("glow-enabled");
+    if (props.enabled) {
+      root.style.setProperty("--glow-color", props.color);
+      root.style.setProperty("--glow-intensity", props.intensity.toString());
+      document.body.classList.add("glow-enabled");
+    } else {
+      document.body.classList.remove("glow-enabled");
+    }
   });
 
   onCleanup(() => {

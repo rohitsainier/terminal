@@ -1,8 +1,6 @@
-import { createSignal } from "solid-js";
-
 interface Suggestion {
   text: string;
-  type: "history" | "path" | "command" | "ai";
+  type: "history" | "path" | "command" | "snippet";
   icon: string;
 }
 
@@ -11,12 +9,12 @@ interface Props {
   visible: boolean;
   x: number;
   y: number;
+  selectedIndex: number;
   onSelect: (suggestion: Suggestion) => void;
+  onHover: (index: number) => void;
 }
 
 export default function Autocomplete(props: Props) {
-  const [selectedIndex, setSelectedIndex] = createSignal(0);
-
   if (!props.visible || props.suggestions.length === 0) return null;
 
   return (
@@ -29,11 +27,9 @@ export default function Autocomplete(props: Props) {
     >
       {props.suggestions.map((suggestion, index) => (
         <div
-          class={`autocomplete-item ${
-            index === selectedIndex() ? "selected" : ""
-          }`}
+          class={`autocomplete-item ${index === props.selectedIndex ? "selected" : ""}`}
           onClick={() => props.onSelect(suggestion)}
-          onMouseEnter={() => setSelectedIndex(index)}
+          onMouseEnter={() => props.onHover(index)}
         >
           <span class="autocomplete-icon">{suggestion.icon}</span>
           <span class="autocomplete-text">{suggestion.text}</span>
@@ -43,3 +39,5 @@ export default function Autocomplete(props: Props) {
     </div>
   );
 }
+
+export type { Suggestion };

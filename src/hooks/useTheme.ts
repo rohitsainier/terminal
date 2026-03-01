@@ -1,45 +1,51 @@
 import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  getTheme as getLocalTheme,
+  applyThemeToDOM,
+  type Theme,
+} from "../themes/ThemeEngine";
 
 export function useTheme() {
-  const [currentTheme, setCurrentTheme] = createSignal<any>(null);
+  const [currentTheme, setCurrentTheme] = createSignal<Theme | null>(null);
   const [themeName, setThemeName] = createSignal("hacker-green");
 
-  async function loadTheme(name: string) {
+  async function loadTheme(name: string): Promise<Theme | null> {
+    // Try backend first
     try {
-      const theme = await invoke("get_theme", { name });
+      const theme = (await invoke("get_theme", { name })) as Theme;
       setCurrentTheme(theme);
       setThemeName(name);
       applyThemeToDOM(theme);
       return theme;
-    } catch (e) {
-      console.error("Failed to load theme:", e);
+    } catch (_) {
+      // Fallback to frontend theme files
+      const localTheme = getLocalTheme(name);
+      if (localTheme) {
+        setCurrentTheme(localTheme);
+        setThemeName(name);
+        applyThemeToDOM(localTheme);
+        return localTheme;
+      }
+      console.error("Theme not found:", name);
       return null;
     }
   }
 
   async function listThemes(): Promise<string[]> {
-    return (await invoke("list_themes")) as string[];
+    try {
+      return (await invoke("list_themes")) as string[];
+    } catch (_) {
+      return [
+        "hacker-green",
+        "cyberpunk",
+        "matrix",
+        "ghost-protocol",
+        "tron",
+        "midnight",
+      ];
+    }
   }
 
-  function applyThemeToDOM(theme: any) {
-    const root = document.documentElement;
-    root.style.setProperty("--bg", theme.background);
-    root.style.setProperty("--fg", theme.foreground);
-    root.style.setProperty("--accent", theme.accent);
-    root.style.setProperty("--accent-dim", theme.accentDim);
-    root.style.setProperty("--panel-bg", theme.panelBackground);
-    root.style.setProperty("--tab-active", theme.tabActive);
-    root.style.setProperty("--status-bg", theme.statusBar);
-    root.style.setProperty("--border", theme.border);
-    root.style.setProperty("--selection", theme.selection);
-    root.style.setProperty("--glow-color", theme.effects?.glowColor || theme.accent);
-  }
-
-  return {
-    currentTheme,
-    themeName,
-    loadTheme,
-    listThemes,
-  };
+  return { currentTheme, themeName, loadTheme, listThemes };
 }

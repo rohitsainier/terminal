@@ -18,8 +18,6 @@ export default function CommandPalette(props: Props) {
 
   const items: PaletteItem[] = [
     { id: "new-tab", icon: "➕", label: "New Tab", shortcut: "⌘T" },
-    { id: "split-v", icon: "▐", label: "Split Pane Vertical", shortcut: "⌘D" },
-    { id: "split-h", icon: "▄", label: "Split Pane Horizontal", shortcut: "⌘⇧D" },
     { id: "ai-bar", icon: "⚡", label: "AI Command Bar", shortcut: "⌘K" },
     { id: "snippets", icon: "📋", label: "Snippet Library", shortcut: "⌘⇧L" },
     { id: "toggle-sidebar", icon: "📂", label: "Toggle Sidebar", shortcut: "⌘B" },
@@ -33,6 +31,7 @@ export default function CommandPalette(props: Props) {
     { id: "toggle-glow", icon: "✨", label: "Toggle Text Glow" },
     { id: "toggle-matrix", icon: "🌧️", label: "Toggle Matrix Rain" },
     { id: "toggle-particles", icon: "🎆", label: "Toggle Keystroke Particles" },
+    { id: "toggle-hologram", icon: "🔮", label: "Toggle Hologram Effect" },
     { id: "settings", icon: "⚙️", label: "Settings", shortcut: "⌘," },
   ];
 
@@ -41,8 +40,7 @@ export default function CommandPalette(props: Props) {
     if (!q) return items;
     return items.filter(
       (item) =>
-        item.label.toLowerCase().includes(q) ||
-        item.id.toLowerCase().includes(q)
+        item.label.toLowerCase().includes(q) || item.id.toLowerCase().includes(q)
     );
   });
 
