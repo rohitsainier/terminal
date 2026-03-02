@@ -107,6 +107,7 @@ fn main() {
             // MCP + AI Chat 
             commands::mcp_ai_chat,
             commands::mcp_ai_followup,
+            commands::mcp_ai_step,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

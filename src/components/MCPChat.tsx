@@ -1,4 +1,4 @@
-import { createSignal, Show, For, onMount, onCleanup } from "solid-js";
+import { createSignal, Show, For, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 
 interface ChatMessage {
@@ -27,12 +27,17 @@ interface Props {
   onRunCommand: (cmd: string) => void;
 }
 
+const MAX_TOOL_STEPS = 20;
+
 export default function MCPChat(props: Props) {
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
   const [input, setInput] = createSignal("");
   const [loading, setLoading] = createSignal(false);
+  const [currentStep, setCurrentStep] = createSignal("");
+  const [stepCount, setStepCount] = createSignal(0);
   const [servers, setServers] = createSignal<MCPServerInfo[]>([]);
   const [connectedCount, setConnectedCount] = createSignal(0);
+  const [abortRequested, setAbortRequested] = createSignal(false);
   let messagesEndRef: HTMLDivElement | undefined;
   let inputRef: HTMLTextAreaElement | undefined;
 
@@ -40,21 +45,16 @@ export default function MCPChat(props: Props) {
     await loadServers();
     inputRef?.focus();
 
-    // Welcome message
     const connected = servers().filter((s) => s.connected);
     const toolCount = connected.reduce((a, s) => a + s.tools_count, 0);
 
-    setMessages([
-      {
-        id: "welcome",
-        role: "system",
-        content:
-          connected.length > 0
-            ? `Connected to ${connected.length} MCP server${connected.length > 1 ? "s" : ""} with ${toolCount} tools. Ask me anything!`
-            : "No MCP servers connected. Open MCP Panel (⌘M) to start a server, or ask me anything — I can still help with terminal commands.",
-        timestamp: Date.now(),
-      },
-    ]);
+    addMessage({
+      role: "system",
+      content:
+        connected.length > 0
+          ? `Connected to ${connected.length} MCP server${connected.length > 1 ? "s" : ""} with ${toolCount} tools available. I can execute multiple tools in sequence to complete complex tasks. Ask me anything!`
+          : "No MCP servers connected. Open MCP Panel (⌘M) to start a server first.",
+    });
   });
 
   async function loadServers() {
@@ -71,7 +71,7 @@ export default function MCPChat(props: Props) {
     }, 50);
   }
 
-  function addMessage(msg: Omit<ChatMessage, "id" | "timestamp">) {
+  function addMessage(msg: Omit<ChatMessage, "id" | "timestamp">): ChatMessage {
     const newMsg: ChatMessage = {
       ...msg,
       id: crypto.randomUUID(),
@@ -82,116 +82,197 @@ export default function MCPChat(props: Props) {
     return newMsg;
   }
 
+  // Build AI conversation history from our chat messages
+  function buildAIHistory(): { role: string; content: string }[] {
+    return messages()
+      .filter((m) => m.role !== "system")
+      .map((m) => {
+        if (m.role === "tool_call" && m.toolCall) {
+          return {
+            role: "assistant",
+            content: `I called tool "${m.toolCall.tool}" on server "${m.toolCall.server}" with arguments ${JSON.stringify(m.toolCall.arguments)}. Result: ${m.toolCall.result || "success"}`,
+          };
+        }
+        if (m.role === "error") {
+          return { role: "assistant", content: `Error: ${m.content}` };
+        }
+        return {
+          role: m.role === "tool_result" ? "assistant" : m.role,
+          content: m.content,
+        };
+      });
+  }
+
   async function handleSubmit(e?: Event) {
     e?.preventDefault();
     const text = input().trim();
     if (!text || loading()) return;
 
     setInput("");
+    setAbortRequested(false);
     addMessage({ role: "user", content: text });
     setLoading(true);
+    setStepCount(0);
 
     try {
-      const history = messages()
-        .filter((m) => m.role !== "system")
-        .map((m) => {
-          if (m.role === "tool_call" && m.toolCall) {
-            return {
-              role: "assistant",
-              content: `I called tool ${m.toolCall.server}/${m.toolCall.tool} and got: ${m.toolCall.result || "no result"}`,
-            };
-          }
-          return {
-            role: m.role === "error" ? "assistant" : m.role === "tool_result" ? "assistant" : m.role,
-            content: m.content,
-          };
-        });
+      await executeLoop(text);
+    } catch (err: any) {
+      addMessage({ role: "error", content: String(err) });
+    } finally {
+      setLoading(false);
+      setCurrentStep("");
+      setStepCount(0);
+      inputRef?.focus();
+    }
+  }
 
-      history.push({ role: "user", content: text });
+  async function executeLoop(initialPrompt: string) {
+    let step = 0;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 3;
 
-      const response = (await invoke("mcp_ai_chat", {
-        messages: history,
-      })) as any;
-
-      if (response.type === "message") {
+    while (step < MAX_TOOL_STEPS) {
+      if (abortRequested()) {
         addMessage({
-          role: "assistant",
-          content: response.content,
+          role: "system",
+          content: `⏹ Stopped after ${step} step${step !== 1 ? "s" : ""}.`,
         });
+        return;
+      }
 
-        // If it had a tool error but AI recovered with a message
-        if (response.had_tool_error) {
-          addMessage({
-            role: "system",
-            content: "ℹ️ AI couldn't find the right tool but provided an alternative answer.",
-          });
+      step++;
+      setStepCount(step);
+      setCurrentStep(`Step ${step}/${MAX_TOOL_STEPS}...`);
+
+      const history = buildAIHistory();
+
+      // If this is a continuation after tool calls, add a nudge
+      if (step > 1) {
+        history.push({
+          role: "user",
+          content:
+            "Continue with the next step. If all tasks are complete, respond with a final summary message. Remember: use EXACT tool names without server prefix.",
+        });
+      }
+
+      let response: any;
+      try {
+        response = await invoke("mcp_ai_step", { messages: history });
+      } catch (err: any) {
+        addMessage({ role: "error", content: `AI call failed: ${err}` });
+        return;
+      }
+
+      // ── Final message from AI ──
+      if (response.type === "message") {
+        addMessage({ role: "assistant", content: response.content });
+
+        // Check if AI is saying it needs to do more
+        const lower = response.content.toLowerCase();
+        const wantsContinue =
+          lower.includes("let me continue") ||
+          lower.includes("next, i'll") ||
+          lower.includes("now i'll") ||
+          lower.includes("proceeding to") ||
+          lower.includes("moving on to");
+
+        if (wantsContinue && step < MAX_TOOL_STEPS) {
+          // AI sent a status message but wants to continue — keep going
+          continue;
         }
-      } else if (response.type === "tool_call") {
-        // Show tool call with result
+
+        return; // Done!
+      }
+
+      // ── Tool call ──
+      if (response.type === "tool_call") {
+        consecutiveErrors = 0; // Reset error counter on success
+
+        setCurrentStep(
+          `Step ${step}: ${response.server}/${response.tool}`
+        );
+
         addMessage({
           role: "tool_call",
-          content: `Called ${response.server}/${response.tool}`,
+          content: `${response.server}/${response.tool}`,
           toolCall: {
             server: response.server,
             tool: response.tool,
             arguments: response.arguments,
-            result: response.result,
+            result: response.is_error
+              ? `❌ ${response.result}`
+              : response.result,
             isError: response.is_error,
           },
         });
 
-        if (response.retried) {
-          addMessage({
-            role: "system",
-            content: "🔄 Tool name was auto-corrected and retried successfully.",
-          });
-        }
-
-        // Get AI summary
-        if (!response.is_error) {
-          try {
-            const summary = (await invoke("mcp_ai_followup", {
-              messages: history,
-              toolResult: response.result,
-            })) as string;
-
-            addMessage({ role: "assistant", content: summary });
-          } catch (_) {
+        if (response.is_error) {
+          consecutiveErrors++;
+          if (consecutiveErrors >= maxConsecutiveErrors) {
             addMessage({
-              role: "assistant",
-              content: response.result || "Tool executed successfully.",
+              role: "system",
+              content: `⚠️ ${maxConsecutiveErrors} consecutive tool errors. Stopping to prevent infinite loop.`,
             });
+            return;
           }
-        } else {
-          addMessage({
-            role: "error",
-            content: `Tool error: ${response.result}`,
-          });
         }
-      } else if (response.type === "tool_error") {
-        // Tool failed even after retry — show helpful error
+
+        // Continue loop — AI will see the tool result and decide next step
+        continue;
+      }
+
+      // ── Tool error (name resolution failed) ──
+      if (response.type === "tool_error") {
+        consecutiveErrors++;
+
         addMessage({
           role: "error",
-          content: `Could not find or execute tool "${response.original_tool}" on server "${response.server}".`,
+          content: `Tool "${response.tool}" failed: ${response.error}`,
         });
 
-        // Show available tools so user knows what's possible
-        if (response.available_tools) {
+        if (consecutiveErrors >= maxConsecutiveErrors) {
           addMessage({
             role: "system",
-            content: `📋 Available tools on connected servers:\n\n${response.available_tools}\n\nTip: Try asking your question differently, or check if the right MCP server is running.`,
+            content: `⚠️ Too many errors. Stopping. Check if the MCP server has the tools you need.`,
           });
+          return;
         }
+
+        // Continue — AI will see the error and try a different approach
+        continue;
       }
-    } catch (err: any) {
+
+      // Unknown response type
       addMessage({
         role: "error",
-        content: String(err),
+        content: `Unexpected response type: ${response.type}`,
       });
-    } finally {
-      setLoading(false);
-      inputRef?.focus();
+      return;
     }
+
+    // Max steps reached
+    addMessage({
+      role: "system",
+      content: `⚠️ Reached maximum of ${MAX_TOOL_STEPS} steps. The task may not be fully complete.`,
+    });
+
+    // Ask AI for a summary of what was done
+    try {
+      const history = buildAIHistory();
+      history.push({
+        role: "user",
+        content:
+          "You've reached the step limit. Please provide a summary of what was completed and what remains to be done.",
+      });
+
+      const summary = (await invoke("mcp_ai_step", {
+        messages: history,
+      })) as any;
+
+      if (summary.type === "message") {
+        addMessage({ role: "assistant", content: summary.content });
+      }
+    } catch (_) {}
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -199,6 +280,10 @@ export default function MCPChat(props: Props) {
       e.preventDefault();
       handleSubmit();
     }
+  }
+
+  function handleAbort() {
+    setAbortRequested(true);
   }
 
   function formatTime(ts: number): string {
@@ -209,12 +294,26 @@ export default function MCPChat(props: Props) {
     });
   }
 
-  // Quick actions
+  function clearChat() {
+    setMessages([]);
+    loadServers().then(() => {
+      const connected = servers().filter((s) => s.connected);
+      const toolCount = connected.reduce((a, s) => a + s.tools_count, 0);
+      addMessage({
+        role: "system",
+        content:
+          connected.length > 0
+            ? `Chat cleared. ${connected.length} server${connected.length > 1 ? "s" : ""} connected with ${toolCount} tools.`
+            : "Chat cleared. No servers connected.",
+      });
+    });
+  }
+
   const suggestions = [
-    "What files are in the current directory?",
-    "Show me system information",
-    "Search for large files",
-    "Read the README.md file",
+    "Create a complete dashboard layout with sidebar, header, and cards",
+    "Set up a project folder structure with config files",
+    "Design a mobile app login screen with all UI elements",
+    "Read all markdown files and summarize them",
   ];
 
   return (
@@ -235,6 +334,13 @@ export default function MCPChat(props: Props) {
             </Show>
           </div>
           <div class="mcpchat-header-right">
+            <button
+              class="mcpchat-header-btn"
+              onClick={clearChat}
+              title="Clear chat"
+            >
+              🗑️
+            </button>
             <button
               class="mcpchat-header-btn"
               onClick={loadServers}
@@ -263,12 +369,32 @@ export default function MCPChat(props: Props) {
           </div>
         </Show>
 
+        {/* Progress bar during multi-step */}
+        <Show when={loading() && stepCount() > 0}>
+          <div class="mcpchat-progress">
+            <div class="mcpchat-progress-bar">
+              <div
+                class="mcpchat-progress-fill"
+                style={{
+                  width: `${Math.min((stepCount() / MAX_TOOL_STEPS) * 100, 100)}%`,
+                }}
+              />
+            </div>
+            <div class="mcpchat-progress-info">
+              <span>{currentStep()}</span>
+              <button class="mcpchat-abort-btn" onClick={handleAbort}>
+                ⏹ Stop
+              </button>
+            </div>
+          </div>
+        </Show>
+
         {/* Messages */}
         <div class="mcpchat-messages">
           <For each={messages()}>
             {(msg) => (
               <div class={`mcpchat-msg mcpchat-msg-${msg.role}`}>
-                {/* System message */}
+                {/* System */}
                 <Show when={msg.role === "system"}>
                   <div class="mcpchat-system">
                     <span class="mcpchat-system-icon">💡</span>
@@ -276,23 +402,27 @@ export default function MCPChat(props: Props) {
                   </div>
                 </Show>
 
-                {/* User message */}
+                {/* User */}
                 <Show when={msg.role === "user"}>
                   <div class="mcpchat-bubble user">
                     <div class="mcpchat-bubble-header">
                       <span>You</span>
-                      <span class="mcpchat-time">{formatTime(msg.timestamp)}</span>
+                      <span class="mcpchat-time">
+                        {formatTime(msg.timestamp)}
+                      </span>
                     </div>
                     <div class="mcpchat-bubble-content">{msg.content}</div>
                   </div>
                 </Show>
 
-                {/* Assistant message */}
+                {/* Assistant */}
                 <Show when={msg.role === "assistant"}>
                   <div class="mcpchat-bubble assistant">
                     <div class="mcpchat-bubble-header">
                       <span>🤖 AI</span>
-                      <span class="mcpchat-time">{formatTime(msg.timestamp)}</span>
+                      <span class="mcpchat-time">
+                        {formatTime(msg.timestamp)}
+                      </span>
                     </div>
                     <div class="mcpchat-bubble-content">
                       <MessageContent
@@ -303,9 +433,11 @@ export default function MCPChat(props: Props) {
                   </div>
                 </Show>
 
-                {/* Tool call */}
+                {/* Tool Call */}
                 <Show when={msg.role === "tool_call" && msg.toolCall}>
-                  <div class="mcpchat-tool-call">
+                  <div
+                    class={`mcpchat-tool-call ${msg.toolCall!.isError ? "errored" : ""}`}
+                  >
                     <div class="mcpchat-tool-call-header">
                       <span class="mcpchat-tool-icon">🛠️</span>
                       <span>
@@ -318,34 +450,42 @@ export default function MCPChat(props: Props) {
                       </span>
                     </div>
 
-                    {/* Arguments */}
-                    <Show when={msg.toolCall!.arguments && Object.keys(msg.toolCall!.arguments).length > 0}>
-                      <div class="mcpchat-tool-args">
-                        <span class="mcpchat-tool-label">Arguments:</span>
-                        <pre>{JSON.stringify(msg.toolCall!.arguments, null, 2)}</pre>
-                      </div>
+                    <Show
+                      when={
+                        msg.toolCall!.arguments &&
+                        Object.keys(msg.toolCall!.arguments).length > 0
+                      }
+                    >
+                      <details class="mcpchat-tool-details">
+                        <summary>Arguments</summary>
+                        <pre>
+                          {JSON.stringify(msg.toolCall!.arguments, null, 2)}
+                        </pre>
+                      </details>
                     </Show>
 
-                    {/* Result */}
                     <Show when={msg.toolCall!.result}>
-                      <div class="mcpchat-tool-result-box">
-                        <div class="mcpchat-tool-result-header">
-                          <span class="mcpchat-tool-label">Result</span>
+                      <details class="mcpchat-tool-details" open={msg.toolCall!.isError}>
+                        <summary>
+                          Result
                           <button
                             class="mcpchat-copy-btn"
                             onClick={() =>
-                              navigator.clipboard.writeText(msg.toolCall!.result || "")
+                              navigator.clipboard.writeText(
+                                msg.toolCall!.result || ""
+                              )
                             }
                           >
                             📋
                           </button>
-                        </div>
+                        </summary>
                         <pre class="mcpchat-tool-result-content">
-                          {msg.toolCall!.result!.length > 500
-                            ? msg.toolCall!.result!.slice(0, 500) + "\n... (truncated)"
+                          {msg.toolCall!.result!.length > 300
+                            ? msg.toolCall!.result!.slice(0, 300) +
+                              "\n... (truncated)"
                             : msg.toolCall!.result}
                         </pre>
-                      </div>
+                      </details>
                     </Show>
                   </div>
                 </Show>
@@ -355,7 +495,9 @@ export default function MCPChat(props: Props) {
                   <div class="mcpchat-bubble error">
                     <div class="mcpchat-bubble-header">
                       <span>⚠️ Error</span>
-                      <span class="mcpchat-time">{formatTime(msg.timestamp)}</span>
+                      <span class="mcpchat-time">
+                        {formatTime(msg.timestamp)}
+                      </span>
                     </div>
                     <div class="mcpchat-bubble-content">{msg.content}</div>
                   </div>
@@ -364,7 +506,7 @@ export default function MCPChat(props: Props) {
             )}
           </For>
 
-          {/* Loading indicator */}
+          {/* Loading */}
           <Show when={loading()}>
             <div class="mcpchat-loading">
               <div class="mcpchat-loading-dots">
@@ -372,14 +514,16 @@ export default function MCPChat(props: Props) {
                 <span />
                 <span />
               </div>
-              <span>Thinking...</span>
+              <span>{currentStep() || "Thinking..."}</span>
             </div>
           </Show>
 
-          {/* Suggestions (show only when no messages besides system) */}
+          {/* Suggestions */}
           <Show when={messages().length <= 1 && !loading()}>
             <div class="mcpchat-suggestions">
-              <span class="mcpchat-suggestions-label">Try asking:</span>
+              <span class="mcpchat-suggestions-label">
+                Try a multi-step task:
+              </span>
               <For each={suggestions}>
                 {(s) => (
                   <button
@@ -409,11 +553,13 @@ export default function MCPChat(props: Props) {
               onInput={(e) => setInput(e.currentTarget.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                connectedCount() > 0
-                  ? "Ask me anything... I can use MCP tools to help"
-                  : "Ask me anything..."
+                loading()
+                  ? "Working on it..."
+                  : connectedCount() > 0
+                    ? "Describe a complex task — I'll use multiple tools to complete it..."
+                    : "Ask me anything..."
               }
-              rows={1}
+              rows={2}
               disabled={loading()}
             />
             <button
@@ -425,7 +571,10 @@ export default function MCPChat(props: Props) {
             </button>
           </form>
           <div class="mcpchat-input-hint">
-            <span>Enter to send · Shift+Enter for new line · Esc to close</span>
+            <span>
+              Enter to send · Shift+Enter for new line · Max{" "}
+              {MAX_TOOL_STEPS} steps per task
+            </span>
           </div>
         </div>
       </div>
@@ -433,13 +582,19 @@ export default function MCPChat(props: Props) {
   );
 }
 
-// ── Helper: render message with code blocks and run buttons ──
+// ── Code block renderer ──
 
-function MessageContent(props: { text: string; onRunCommand: (cmd: string) => void }) {
-  // Split text into regular text and code blocks
+function MessageContent(props: {
+  text: string;
+  onRunCommand: (cmd: string) => void;
+}) {
   const parts = () => {
     const text = props.text;
-    const result: { type: "text" | "code"; content: string; lang?: string }[] = [];
+    const result: {
+      type: "text" | "code";
+      content: string;
+      lang?: string;
+    }[] = [];
     const codeRegex = /```(\w*)\n?([\s\S]*?)```/g;
     let lastIndex = 0;
     let match;
@@ -487,15 +642,22 @@ function MessageContent(props: { text: string; onRunCommand: (cmd: string) => vo
                     onClick={() =>
                       navigator.clipboard.writeText(part.content)
                     }
-                    title="Copy"
                   >
                     📋
                   </button>
-                  <Show when={part.lang === "shell" || part.lang === "bash" || part.lang === "sh" || !part.lang}>
+                  <Show
+                    when={
+                      part.lang === "shell" ||
+                      part.lang === "bash" ||
+                      part.lang === "sh" ||
+                      !part.lang
+                    }
+                  >
                     <button
                       class="mcpchat-code-btn run"
-                      onClick={() => props.onRunCommand(part.content + "\n")}
-                      title="Run in terminal"
+                      onClick={() =>
+                        props.onRunCommand(part.content + "\n")
+                      }
                     >
                       ▶ Run
                     </button>

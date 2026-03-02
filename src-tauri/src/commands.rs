@@ -727,3 +727,81 @@ pub async fn mcp_ai_followup(
         }
     }
 }
+
+/// Single-step MCP+AI: returns ONE tool call result or a final message.
+/// Frontend loops this until AI returns type="message".
+#[tauri::command]
+pub async fn mcp_ai_step(
+    state: State<'_, AppState>,
+    messages: Vec<crate::ai::ChatMessage>,
+) -> Result<serde_json::Value, String> {
+    let engine = {
+        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
+        guard
+            .clone()
+            .ok_or("AI not configured. Set up a provider in Settings.")?
+    };
+
+    let mcp_context = {
+        let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+        manager.get_tools_for_ai_context()
+    };
+
+    let os = std::env::consts::OS;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+
+    let response = engine
+        .chat_with_tools(&messages, &mcp_context, os, &shell)
+        .await?;
+
+    match response {
+        crate::ai::ChatResponse::Message(msg) => {
+            Ok(serde_json::json!({
+                "type": "message",
+                "content": msg
+            }))
+        }
+        crate::ai::ChatResponse::ToolCall {
+            server,
+            tool,
+            arguments,
+        } => {
+            // Execute the tool
+            let tool_result = {
+                let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+                manager.call_tool(&server, &tool, arguments.clone())
+            };
+
+            match tool_result {
+                Ok(result) => {
+                    let result_text = result
+                        .content
+                        .iter()
+                        .filter_map(|c| c.text.as_ref())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    Ok(serde_json::json!({
+                        "type": "tool_call",
+                        "server": server,
+                        "tool": tool,
+                        "arguments": arguments,
+                        "result": result_text,
+                        "is_error": result.is_error
+                    }))
+                }
+                Err(e) => {
+                    // Return error so AI can retry with correct tool name
+                    Ok(serde_json::json!({
+                        "type": "tool_error",
+                        "server": server,
+                        "tool": tool,
+                        "arguments": arguments,
+                        "error": e
+                    }))
+                }
+            }
+        }
+    }
+}
