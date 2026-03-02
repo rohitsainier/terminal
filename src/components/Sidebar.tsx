@@ -22,6 +22,11 @@ interface HistoryEntry {
   cwd: string;
 }
 
+interface CommandFrequency {
+  command: string;
+  count: number;
+}
+
 interface SnippetEntry {
   id: string;
   name: string;
@@ -48,7 +53,7 @@ export default function Sidebar(props: Props) {
   const [history, setHistory] = createSignal<HistoryEntry[]>([]);
   const [snippets, setSnippets] = createSignal<SnippetEntry[]>([]);
   const [knownHosts, setKnownHosts] = createSignal<string[]>([]);
-  const [topCommands, setTopCommands] = createSignal<[string, number][]>([]);
+  const [topCommands, setTopCommands] = createSignal<CommandFrequency[]>([]);
 
   // SSH form
   const [showSSHForm, setShowSSHForm] = createSignal(false);
@@ -70,7 +75,7 @@ export default function Sidebar(props: Props) {
       } else if (section === "history") {
         const hist = (await invoke("recent_history", { limit: 50 })) as HistoryEntry[];
         setHistory(hist);
-        const top = (await invoke("most_used_commands", { limit: 10 })) as [string, number][];
+        const top = (await invoke("most_used_commands", { limit: 10 })) as CommandFrequency[];
         setTopCommands(top);
       } else if (section === "snippets") {
         const snips = (await invoke("list_snippets")) as SnippetEntry[];
@@ -131,7 +136,7 @@ export default function Sidebar(props: Props) {
   }
 
   async function clearAllHistory() {
-    await invoke("clear_history").catch(() => {});
+    await invoke("clear_all_history").catch(() => {});
     setHistory([]);
     setTopCommands([]);
   }
@@ -350,18 +355,18 @@ export default function Sidebar(props: Props) {
                   TOP COMMANDS
                 </div>
                 <For each={topCommands().slice(0, 5)}>
-                  {([cmd, count]) => (
+                  {(entry) => (
                     <div
                       class="sidebar-item"
-                      onClick={() => props.onSnippetRun(cmd)}
+                      onClick={() => props.onSnippetRun(entry.command)}
                     >
                       <span
                         class="sidebar-item-icon"
                         style={{ "font-size": "9px", opacity: "0.4" }}
                       >
-                        ×{count}
+                        ×{entry.count}
                       </span>
-                      <span class="sidebar-item-mono">{cmd}</span>
+                      <span class="sidebar-item-mono">{entry.command}</span>
                     </div>
                   )}
                 </For>
