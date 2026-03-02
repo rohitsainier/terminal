@@ -4,7 +4,7 @@ use crate::pty::PtyManager;
 use crate::snippets::SnippetManager;
 use crate::ssh::{SSHConnection, SSHManager};
 use crate::terminal::{CommandHistoryEntry, SessionInfo, SessionManager};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
 
@@ -520,7 +520,6 @@ pub async fn mcp_ai_chat(
     state: State<'_, AppState>,
     messages: Vec<crate::ai::ChatMessage>,
 ) -> Result<serde_json::Value, String> {
-    // Get AI engine
     let engine = {
         let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
         guard
@@ -528,7 +527,6 @@ pub async fn mcp_ai_chat(
             .ok_or("AI not configured. Set up a provider in Settings.")?
     };
 
-    // Get MCP tool context
     let mcp_context = {
         let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
         manager.get_tools_for_ai_context()
@@ -537,7 +535,6 @@ pub async fn mcp_ai_chat(
     let os = std::env::consts::OS;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
 
-    // Call AI with tool context
     let response = engine
         .chat_with_tools(&messages, &mcp_context, os, &shell)
         .await?;
@@ -554,7 +551,7 @@ pub async fn mcp_ai_chat(
             tool,
             arguments,
         } => {
-            // Auto-execute the tool call
+            // Try to execute the tool
             let tool_result = {
                 let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
                 manager.call_tool(&server, &tool, arguments.clone())
@@ -580,14 +577,108 @@ pub async fn mcp_ai_chat(
                     }))
                 }
                 Err(e) => {
-                    Ok(serde_json::json!({
-                        "type": "tool_call",
-                        "server": server,
-                        "tool": tool,
-                        "arguments": arguments,
-                        "result": format!("Error: {}", e),
-                        "is_error": true
-                    }))
+                    // ── AUTO-RETRY: Ask AI again with the error context ──
+                    eprintln!("[MCP] Tool call failed: {}. Retrying with AI...", e);
+
+                    // Build retry messages
+                    let mut retry_messages = messages.clone();
+                    retry_messages.push(crate::ai::ChatMessage {
+                        role: "tool_result".to_string(),
+                        content: format!(
+                            "ERROR: {}.\n\n\
+                             IMPORTANT: Use the EXACT tool name from the available list. \
+                             Do NOT prefix with server name. \
+                             For example, use \"create_frame\" not \"figma/create_frame\".\n\n\
+                             Try again with the correct tool name, or if no suitable tool exists, \
+                             respond with a message explaining what the user should do.",
+                            e
+                        ),
+                    });
+
+                    // Retry with AI
+                    match engine
+                        .chat_with_tools(&retry_messages, &mcp_context, os, &shell)
+                        .await
+                    {
+                        Ok(retry_response) => match retry_response {
+                            crate::ai::ChatResponse::ToolCall {
+                                server: retry_server,
+                                tool: retry_tool,
+                                arguments: retry_args,
+                            } => {
+                                // Second attempt
+                                let retry_result = {
+                                    let mut manager = state
+                                        .mcp_manager
+                                        .lock()
+                                        .map_err(|_| "Lock error")?;
+                                    manager.call_tool(
+                                        &retry_server,
+                                        &retry_tool,
+                                        retry_args.clone(),
+                                    )
+                                };
+
+                                match retry_result {
+                                    Ok(result) => {
+                                        let result_text = result
+                                            .content
+                                            .iter()
+                                            .filter_map(|c| c.text.as_ref())
+                                            .cloned()
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+
+                                        Ok(serde_json::json!({
+                                            "type": "tool_call",
+                                            "server": retry_server,
+                                            "tool": retry_tool,
+                                            "arguments": retry_args,
+                                            "result": result_text,
+                                            "is_error": result.is_error,
+                                            "retried": true
+                                        }))
+                                    }
+                                    Err(retry_err) => {
+                                        // Both attempts failed — return error with available tools
+                                        let available = {
+                                            let manager = state
+                                                .mcp_manager
+                                                .lock()
+                                                .map_err(|_| "Lock error")?;
+                                            manager.get_tools_for_ai_context()
+                                        };
+
+                                        Ok(serde_json::json!({
+                                            "type": "tool_error",
+                                            "original_tool": tool,
+                                            "retry_tool": retry_tool,
+                                            "error": retry_err,
+                                            "available_tools": available,
+                                            "server": server
+                                        }))
+                                    }
+                                }
+                            }
+                            crate::ai::ChatResponse::Message(msg) => {
+                                // AI decided to respond with a message instead of retrying
+                                Ok(serde_json::json!({
+                                    "type": "message",
+                                    "content": msg,
+                                    "had_tool_error": true
+                                }))
+                            }
+                        },
+                        Err(retry_err) => {
+                            // Retry AI call itself failed
+                            Ok(serde_json::json!({
+                                "type": "tool_error",
+                                "original_tool": tool,
+                                "error": format!("Original: {} | Retry: {}", e, retry_err),
+                                "server": server
+                            }))
+                        }
+                    }
                 }
             }
         }

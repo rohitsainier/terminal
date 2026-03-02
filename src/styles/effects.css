@@ -2035,3 +2035,14 @@
 .mcpchat-msg-system {
   align-items: flex-start;
 }
+
+/* ─── MCP Chat System Text ───────────── */
+
+.mcpchat-system-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  line-height: 1.5;
+}

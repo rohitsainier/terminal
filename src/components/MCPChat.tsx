@@ -92,7 +92,6 @@ export default function MCPChat(props: Props) {
     setLoading(true);
 
     try {
-      // Build message history for AI
       const history = messages()
         .filter((m) => m.role !== "system")
         .map((m) => {
@@ -103,26 +102,35 @@ export default function MCPChat(props: Props) {
             };
           }
           return {
-            role: m.role === "error" ? "assistant" : m.role,
+            role: m.role === "error" ? "assistant" : m.role === "tool_result" ? "assistant" : m.role,
             content: m.content,
           };
         });
 
-      // Add current user message
       history.push({ role: "user", content: text });
 
-      // Call AI with MCP context
       const response = (await invoke("mcp_ai_chat", {
         messages: history,
       })) as any;
 
       if (response.type === "message") {
-        addMessage({ role: "assistant", content: response.content });
+        addMessage({
+          role: "assistant",
+          content: response.content,
+        });
+
+        // If it had a tool error but AI recovered with a message
+        if (response.had_tool_error) {
+          addMessage({
+            role: "system",
+            content: "ℹ️ AI couldn't find the right tool but provided an alternative answer.",
+          });
+        }
       } else if (response.type === "tool_call") {
-        // Show tool call
-        const toolMsg = addMessage({
+        // Show tool call with result
+        addMessage({
           role: "tool_call",
-          content: `Calling ${response.server}/${response.tool}...`,
+          content: `Called ${response.server}/${response.tool}`,
           toolCall: {
             server: response.server,
             tool: response.tool,
@@ -132,7 +140,14 @@ export default function MCPChat(props: Props) {
           },
         });
 
-        // Get AI to summarize the result
+        if (response.retried) {
+          addMessage({
+            role: "system",
+            content: "🔄 Tool name was auto-corrected and retried successfully.",
+          });
+        }
+
+        // Get AI summary
         if (!response.is_error) {
           try {
             const summary = (await invoke("mcp_ai_followup", {
@@ -142,7 +157,6 @@ export default function MCPChat(props: Props) {
 
             addMessage({ role: "assistant", content: summary });
           } catch (_) {
-            // If summary fails, show raw result
             addMessage({
               role: "assistant",
               content: response.result || "Tool executed successfully.",
@@ -152,6 +166,20 @@ export default function MCPChat(props: Props) {
           addMessage({
             role: "error",
             content: `Tool error: ${response.result}`,
+          });
+        }
+      } else if (response.type === "tool_error") {
+        // Tool failed even after retry — show helpful error
+        addMessage({
+          role: "error",
+          content: `Could not find or execute tool "${response.original_tool}" on server "${response.server}".`,
+        });
+
+        // Show available tools so user knows what's possible
+        if (response.available_tools) {
+          addMessage({
+            role: "system",
+            content: `📋 Available tools on connected servers:\n\n${response.available_tools}\n\nTip: Try asking your question differently, or check if the right MCP server is running.`,
           });
         }
       }
@@ -244,7 +272,7 @@ export default function MCPChat(props: Props) {
                 <Show when={msg.role === "system"}>
                   <div class="mcpchat-system">
                     <span class="mcpchat-system-icon">💡</span>
-                    <span>{msg.content}</span>
+                    <pre class="mcpchat-system-text">{msg.content}</pre>
                   </div>
                 </Show>
 

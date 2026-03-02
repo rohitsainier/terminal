@@ -474,46 +474,51 @@ impl MCPManager {
             .get_mut(server_name)
             .ok_or_else(|| format!("Server '{}' is not running. Start it first.", server_name))?;
 
-        // Verify tool exists
-        if !conn.tools.iter().any(|t| t.name == tool_name) {
-            let available: Vec<&str> = conn.tools.iter().map(|t| t.name.as_str()).collect();
-            return Err(format!(
-                "Tool '{}' not found on server '{}'. Available: {:?}",
-                tool_name, server_name, available
-            ));
+        // ── Smart tool name resolution ──
+        let resolved_name = Self::resolve_tool_name(tool_name, &conn.tools);
+
+        match resolved_name {
+            Some(name) => {
+                eprintln!(
+                    "[MCP] Calling tool '{}/{}' (resolved from '{}') with args: {}",
+                    server_name, name, tool_name,
+                    truncate_str(&arguments.to_string(), 200)
+                );
+
+                let result = Self::send_request_on(
+                    conn,
+                    "tools/call",
+                    serde_json::json!({
+                        "name": name,
+                        "arguments": arguments
+                    }),
+                )?;
+
+                let tool_result: MCPToolResult = serde_json::from_value(result.clone())
+                    .map_err(|e| {
+                        format!(
+                            "Failed to parse tool result: {} | Raw: {}",
+                            e, truncate_str(&result.to_string(), 300)
+                        )
+                    })?;
+
+                eprintln!(
+                    "[MCP] Tool call result: is_error={}, content_count={}",
+                    tool_result.is_error, tool_result.content.len()
+                );
+
+                Ok(tool_result)
+            }
+            None => {
+                let available: Vec<&str> = conn.tools.iter().map(|t| t.name.as_str()).collect();
+                Err(format!(
+                    "Tool '{}' not found on server '{}'. Available tools: [{}]",
+                    tool_name,
+                    server_name,
+                    available.join(", ")
+                ))
+            }
         }
-
-        eprintln!(
-            "[MCP] Calling tool '{}/{}' with args: {}",
-            server_name,
-            tool_name,
-            truncate_str(&arguments.to_string(), 200)
-        );
-
-        let result = Self::send_request_on(
-            conn,
-            "tools/call",
-            serde_json::json!({
-                "name": tool_name,
-                "arguments": arguments
-            }),
-        )?;
-
-        let tool_result: MCPToolResult = serde_json::from_value(result.clone()).map_err(|e| {
-            format!(
-                "Failed to parse tool result: {} | Raw: {}",
-                e,
-                truncate_str(&result.to_string(), 300)
-            )
-        })?;
-
-        eprintln!(
-            "[MCP] Tool call result: is_error={}, content_count={}",
-            tool_result.is_error,
-            tool_result.content.len()
-        );
-
-        Ok(tool_result)
     }
 
     // ── Server Status ──
@@ -558,22 +563,52 @@ impl MCPManager {
             return String::new();
         }
 
-        let mut ctx = String::from("\n\nAvailable MCP Tools:\n");
+        let mut ctx = String::from("\n\nAvailable MCP Tools (use EXACT tool names, do NOT prefix with server name):\n\n");
+
+        // Group by server
+        let mut by_server: std::collections::HashMap<&str, Vec<&MCPTool>> =
+            std::collections::HashMap::new();
         for (server, tool) in &all_tools {
-            ctx.push_str(&format!(
-                "- {}/{}: {}\n",
-                server, tool.name, tool.description
-            ));
-            if !tool.input_schema.is_null() {
-                if let Some(props) = tool.input_schema["properties"].as_object() {
-                    let params: Vec<String> = props
-                        .keys()
-                        .map(|k| k.clone())
-                        .collect();
-                    ctx.push_str(&format!("  Parameters: {}\n", params.join(", ")));
+            by_server.entry(server.as_str()).or_default().push(tool);
+        }
+
+        for (server, tools) in &by_server {
+            ctx.push_str(&format!("Server: \"{}\"\n", server));
+            for tool in tools {
+                ctx.push_str(&format!(
+                    "  - Tool name: \"{}\" → {}\n",
+                    tool.name, tool.description
+                ));
+                if !tool.input_schema.is_null() {
+                    if let Some(props) = tool.input_schema["properties"].as_object() {
+                        let required: Vec<&str> = tool.input_schema["required"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        for (key, prop) in props {
+                            let prop_type = prop["type"].as_str().unwrap_or("any");
+                            let is_req = required.contains(&key.as_str());
+                            let desc = prop["description"].as_str().unwrap_or("");
+                            ctx.push_str(&format!(
+                                "    - {}: {} {}{}\n",
+                                key,
+                                prop_type,
+                                if is_req { "(required) " } else { "" },
+                                if desc.is_empty() { String::new() } else { format!("— {}", desc) }
+                            ));
+                        }
+                    }
                 }
             }
+            ctx.push('\n');
         }
+
+        ctx.push_str("IMPORTANT: When calling a tool, use the EXACT tool name (e.g. \"create_frame\"), NOT \"server/tool\" format.\n");
         ctx
     }
 
@@ -694,6 +729,103 @@ impl MCPManager {
             .map_err(|e| format!("Flush error: {}", e))?;
 
         Ok(())
+    }
+
+    /// Resolve a tool name using multiple strategies:
+    /// 1. Exact match
+    /// 2. Strip "server/" prefix (AI often sends "figma/create_frame" instead of "create_frame")
+    /// 3. Case-insensitive match
+    /// 4. Fuzzy match (contains)
+    fn resolve_tool_name<'a>(input: &str, tools: &'a [MCPTool]) -> Option<String> {
+        let input_trimmed = input.trim();
+
+        // 1. Exact match
+        if let Some(t) = tools.iter().find(|t| t.name == input_trimmed) {
+            return Some(t.name.clone());
+        }
+
+        // 2. Strip "server/" prefix — AI often sends "server_name/tool_name"
+        if let Some(slash_pos) = input_trimmed.rfind('/') {
+            let after_slash = &input_trimmed[slash_pos + 1..];
+            if let Some(t) = tools.iter().find(|t| t.name == after_slash) {
+                eprintln!(
+                    "[MCP] Resolved '{}' → '{}' (stripped server prefix)",
+                    input_trimmed, t.name
+                );
+                return Some(t.name.clone());
+            }
+        }
+
+        // 3. Case-insensitive match
+        let input_lower = input_trimmed.to_lowercase();
+        if let Some(t) = tools.iter().find(|t| t.name.to_lowercase() == input_lower) {
+            eprintln!(
+                "[MCP] Resolved '{}' → '{}' (case-insensitive)",
+                input_trimmed, t.name
+            );
+            return Some(t.name.clone());
+        }
+
+        // 4. Case-insensitive after stripping prefix
+        if let Some(slash_pos) = input_trimmed.rfind('/') {
+            let after_slash = &input_trimmed[slash_pos + 1..];
+            let after_lower = after_slash.to_lowercase();
+            if let Some(t) = tools.iter().find(|t| t.name.to_lowercase() == after_lower) {
+                eprintln!(
+                    "[MCP] Resolved '{}' → '{}' (stripped prefix + case-insensitive)",
+                    input_trimmed, t.name
+                );
+                return Some(t.name.clone());
+            }
+        }
+
+        // 5. Fuzzy: input contains tool name or tool name contains input
+        let candidates: Vec<&MCPTool> = tools
+            .iter()
+            .filter(|t| {
+                let tl = t.name.to_lowercase();
+                tl.contains(&input_lower) || input_lower.contains(&tl)
+            })
+            .collect();
+
+        if candidates.len() == 1 {
+            eprintln!(
+                "[MCP] Resolved '{}' → '{}' (fuzzy match)",
+                input_trimmed, candidates[0].name
+            );
+            return Some(candidates[0].name.clone());
+        }
+
+        // 6. Underscore/hyphen normalization: create-frame → create_frame
+        let normalized = input_lower
+            .replace('-', "_")
+            .replace(' ', "_");
+        if let Some(t) = tools.iter().find(|t| {
+            t.name.to_lowercase().replace('-', "_") == normalized
+        }) {
+            eprintln!(
+                "[MCP] Resolved '{}' → '{}' (normalized)",
+                input_trimmed, t.name
+            );
+            return Some(t.name.clone());
+        }
+
+        // Strip prefix + normalize
+        if let Some(slash_pos) = input_trimmed.rfind('/') {
+            let after_slash = &input_trimmed[slash_pos + 1..];
+            let normalized = after_slash.to_lowercase().replace('-', "_").replace(' ', "_");
+            if let Some(t) = tools.iter().find(|t| {
+                t.name.to_lowercase().replace('-', "_") == normalized
+            }) {
+                eprintln!(
+                    "[MCP] Resolved '{}' → '{}' (stripped + normalized)",
+                    input_trimmed, t.name
+                );
+                return Some(t.name.clone());
+            }
+        }
+
+        None
     }
 }
 
