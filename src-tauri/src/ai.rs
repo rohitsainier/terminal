@@ -688,3 +688,58 @@ pub async fn list_ollama_models(base_url: &str) -> Result<Vec<String>, String> {
     Ok(models)
 }
 
+/// Fetch available models from OpenAI
+pub async fn list_openai_models(api_key: &str) -> Result<Vec<String>, String> {
+    if api_key.trim().is_empty() {
+        return Err("OpenAI API key is empty. Add it in Settings → AI Provider.".into());
+    }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get("https://api.openai.com/v1/models")
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|e| format!("OpenAI request failed: {}", e))?;
+
+    let status = resp.status();
+    let raw_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read OpenAI response: {}", e))?;
+
+    if !status.is_success() {
+        let data: serde_json::Value = serde_json::from_str(&raw_text).unwrap_or_default();
+        let msg = data["error"]["message"]
+            .as_str()
+            .unwrap_or("Unknown OpenAI error");
+        return Err(format!("OpenAI error ({}): {}", status, msg));
+    }
+
+    let data: serde_json::Value = serde_json::from_str(&raw_text)
+        .map_err(|e| format!("Failed to parse OpenAI response: {}", e))?;
+
+    let mut models: Vec<String> = data["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    models.sort();
+    models.dedup();
+
+    if models.is_empty() {
+        return Err("OpenAI returned no models for this API key.".to_string());
+    }
+
+    Ok(models)
+}
+

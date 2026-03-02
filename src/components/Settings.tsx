@@ -59,10 +59,22 @@ export default function Settings(props: Props) {
   const [modelsLoading, setModelsLoading] = createSignal(false);
   const [modelsError, setModelsError] = createSignal("");
 
+  // ── Dynamic OpenAI models ──
+  const [openaiModels, setOpenaiModels] = createSignal<string[]>([]);
+  const [openaiModelsLoading, setOpenaiModelsLoading] = createSignal(false);
+  const [openaiModelsError, setOpenaiModelsError] = createSignal("");
+
   // Auto-fetch when switching to Ollama settings
   createEffect(() => {
     if (activeTab() === "ai" && aiType() === "ollama") {
       fetchOllamaModels();
+    }
+  });
+
+  // Auto-fetch when switching to OpenAI settings with a key present
+  createEffect(() => {
+    if (activeTab() === "ai" && aiType() === "openai" && openaiKey()) {
+      fetchOpenAIModels();
     }
   });
 
@@ -80,6 +92,25 @@ export default function Settings(props: Props) {
       setOllamaModels([]);
     } finally {
       setModelsLoading(false);
+    }
+  }
+
+  async function fetchOpenAIModels() {
+    setOpenaiModelsLoading(true);
+    setOpenaiModelsError("");
+    try {
+      const models = (await invoke("list_openai_models", {
+        apiKey: openaiKey(),
+      })) as string[];
+      setOpenaiModels(models);
+      if (models.length > 0 && !models.includes(openaiModel())) {
+        setOpenaiModel(models[0]);
+      }
+    } catch (e: any) {
+      setOpenaiModelsError(e.toString());
+      setOpenaiModels([]);
+    } finally {
+      setOpenaiModelsLoading(false);
     }
   }
 
@@ -550,18 +581,83 @@ export default function Settings(props: Props) {
                 </div>
                 <div class="settings-row">
                   <label>Model</label>
-                  <select
-                    class="settings-select"
-                    value={openaiModel()}
-                    onChange={(e) => setOpenaiModel(e.currentTarget.value)}
-                  >
-                    <option value="gpt-4o-mini">gpt-4o-mini</option>
-                    <option value="gpt-4o">gpt-4o</option>
-                    <option value="gpt-4-turbo">gpt-4-turbo</option>
-                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-                    <option value="o3-mini">o3-mini</option>
-                  </select>
+                  <div style={{ flex: "1", display: "flex", gap: "6px" }}>
+                    <Show
+                      when={openaiModels().length > 0}
+                      fallback={
+                        <input
+                          class="settings-input"
+                          type="text"
+                          value={openaiModel()}
+                          onInput={(e) =>
+                            setOpenaiModel(e.currentTarget.value)
+                          }
+                          placeholder="e.g. gpt-4o-mini"
+                        />
+                      }
+                    >
+                      <select
+                        class="settings-select"
+                        value={openaiModel()}
+                        onChange={(e) =>
+                          setOpenaiModel(e.currentTarget.value)
+                        }
+                      >
+                        <For each={openaiModels()}>
+                          {(m) => (
+                            <option value={m}>{m}</option>
+                          )}
+                        </For>
+                      </select>
+                    </Show>
+                    <button
+                      class="settings-btn-option"
+                      style={{
+                        flex: "none",
+                        width: "36px",
+                        opacity: openaiModelsLoading() ? "0.3" : "0.7",
+                      }}
+                      onClick={fetchOpenAIModels}
+                      disabled={openaiModelsLoading() || !openaiKey()}
+                      title={
+                        openaiKey()
+                          ? "Refresh models"
+                          : "Add an API key to load models"
+                      }
+                    >
+                      🔄
+                    </button>
+                  </div>
                 </div>
+
+                <Show when={openaiModelsLoading()}>
+                  <p class="settings-hint">
+                    ⏳ Fetching models from OpenAI...
+                  </p>
+                </Show>
+
+                <Show when={openaiModelsError()}>
+                  <p
+                    class="settings-hint"
+                    style={{ color: "#ff6b6b", opacity: "0.8" }}
+                  >
+                    ⚠️ {openaiModelsError()}
+                    <br />
+                    Type a model manually above, or add a key and hit 🔄
+                  </p>
+                </Show>
+
+                <Show
+                  when={
+                    !openaiModelsLoading() &&
+                    !openaiModelsError() &&
+                    openaiModels().length === 0
+                  }
+                >
+                  <p class="settings-hint">
+                    No models loaded yet. Enter your key and press 🔄.
+                  </p>
+                </Show>
               </div>
             </Show>
 

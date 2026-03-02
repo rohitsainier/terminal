@@ -112,6 +112,11 @@ pub async fn list_ollama_models(base_url: Option<String>) -> Result<Vec<String>,
     crate::ai::list_ollama_models(&url).await
 }
 
+#[tauri::command]
+pub async fn list_openai_models(api_key: String) -> Result<Vec<String>, String> {
+    crate::ai::list_openai_models(&api_key).await
+}
+
 // ─── Config Commands ────────────────────────────
 
 #[tauri::command]

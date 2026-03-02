@@ -60,6 +60,7 @@ fn main() {
             commands::ai_explain_command,
             commands::ai_suggest_fix,
             commands::list_ollama_models,
+            commands::list_openai_models,
             // Config & Themes
             commands::get_config,
             commands::set_config,
