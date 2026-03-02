@@ -444,7 +444,6 @@ Suggest the corrected command. Respond in JSON ONLY (no markdown):
             .ok_or_else(|| "No content in Anthropic response".to_string())
     }
 
-        /// Chat with AI, with MCP tool context and multi-turn support
     pub async fn chat_with_tools(
         &self,
         messages: &[ChatMessage],
@@ -453,83 +452,64 @@ Suggest the corrected command. Respond in JSON ONLY (no markdown):
         shell: &str,
     ) -> Result<ChatResponse, String> {
         let system_prompt = format!(
-            r#"You are a powerful AI assistant with access to MCP tools. You can call multiple tools in sequence to complete complex tasks.
+            r#"You are an AI assistant with access to MCP tools.
 
-OS: {}
-Shell: {}
+OS: {os}
+Shell: {shell}
 
-{}
+{mcp_tools_context}
 
-RESPONSE FORMAT — Always respond with ONE of these JSON formats (no markdown, no code blocks):
+You MUST respond with exactly ONE of these JSON formats. No markdown, no extra text.
 
-1. To call a tool:
-{{"tool_call": {{"server": "server_name", "tool": "exact_tool_name", "arguments": {{...}}}}}}
+To use a tool:
+{{"tool_call": {{"server": "server_name", "tool": "tool_name", "arguments": {{}}}}}}
 
-2. To give a final answer or status update:
-{{"message": "your response here"}}
+To reply to the user:
+{{"message": "your response"}}
 
-CRITICAL RULES:
-- Use EXACT tool names from the list above (e.g. "create_frame" NOT "figma/create_frame")
-- For complex tasks, call ONE tool at a time. After each result, you'll be asked to continue.
-- Break down big tasks into small steps. Execute each step with the appropriate tool.
-- After all steps are done, provide a comprehensive summary of everything you did.
-- If a tool fails, try a different approach or explain what went wrong.
-- Do NOT skip steps — execute every part of the user's request.
-- When you see "Continue with the next step", keep going until everything is done.
-- Only respond with {{"message": "..."}} when ALL tasks are truly complete."#,
-            os, shell, mcp_tools_context
+Rules:
+- Use EXACT tool names from the list (e.g. "create_frame" not "figma/create_frame")
+- For multi-step tasks: call ONE tool per response. You will see the result and can call another.
+- Only send a "message" when you are truly done or have nothing more to do with tools.
+- If a tool errors, try to fix the issue or explain what happened."#,
+            os = os, shell = shell, mcp_tools_context = mcp_tools_context
         );
 
-        // Build conversation for the AI
-        let user_prompt = messages
-            .iter()
-            .map(|m| match m.role.as_str() {
-                "user" => format!("User: {}", m.content),
-                "assistant" => format!("Assistant: {}", m.content),
-                "tool_result" => format!("Tool Result: {}", m.content),
-                _ => format!("{}: {}", m.role, m.content),
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        // Build a single prompt from all messages
+        let mut prompt_parts: Vec<String> = Vec::new();
+        for m in messages {
+            match m.role.as_str() {
+                "user" => prompt_parts.push(format!("User: {}", m.content)),
+                "assistant" => prompt_parts.push(format!("Assistant: {}", m.content)),
+                "tool_result" => prompt_parts.push(format!("[Tool Result]\n{}", m.content)),
+                "tool_error" => prompt_parts.push(format!("[Tool Error]\n{}", m.content)),
+                other => prompt_parts.push(format!("{}: {}", other, m.content)),
+            }
+        }
 
-        let response_text = self
-            .call_provider(&system_prompt, &user_prompt)
-            .await?;
+        let user_prompt = prompt_parts.join("\n\n");
 
-        // Parse the response
+        let response_text = self.call_provider(&system_prompt, &user_prompt).await?;
+
+        // Parse response
         let cleaned = extract_json_from_text(&response_text);
 
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&cleaned) {
-            // Check if it's a tool call
-            if let Some(tool_call) = value.get("tool_call") {
-                let server = tool_call["server"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                let tool = tool_call["tool"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                let arguments = tool_call["arguments"].clone();
-
+            // Tool call
+            if let Some(tc) = value.get("tool_call") {
                 return Ok(ChatResponse::ToolCall {
-                    server,
-                    tool,
-                    arguments: if arguments.is_null() {
-                        serde_json::json!({})
-                    } else {
-                        arguments
-                    },
+                    server: tc["server"].as_str().unwrap_or("").to_string(),
+                    tool: tc["tool"].as_str().unwrap_or("").to_string(),
+                    arguments: tc.get("arguments").cloned().unwrap_or(serde_json::json!({})),
                 });
             }
-
-            // Check if it's a message
+            // Message
             if let Some(msg) = value["message"].as_str() {
                 return Ok(ChatResponse::Message(msg.to_string()));
             }
         }
 
-        // Fallback: treat entire response as a message
+        // Fallback: treat as plain message
         Ok(ChatResponse::Message(response_text))
     }
 }

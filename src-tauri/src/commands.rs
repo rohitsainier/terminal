@@ -728,8 +728,9 @@ pub async fn mcp_ai_followup(
     }
 }
 
-/// Single-step MCP+AI: returns ONE tool call result or a final message.
-/// Frontend loops this until AI returns type="message".
+/// One step of the agentic loop: AI either responds or calls a tool.
+/// If tool_call, backend auto-executes it and returns the result.
+/// Frontend loops until it gets type="message".
 #[tauri::command]
 pub async fn mcp_ai_step(
     state: State<'_, AppState>,
@@ -737,9 +738,7 @@ pub async fn mcp_ai_step(
 ) -> Result<serde_json::Value, String> {
     let engine = {
         let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard
-            .clone()
-            .ok_or("AI not configured. Set up a provider in Settings.")?
+        guard.clone().ok_or("AI not configured. Set up a provider in Settings.")?
     };
 
     let mcp_context = {
@@ -755,18 +754,11 @@ pub async fn mcp_ai_step(
         .await?;
 
     match response {
-        crate::ai::ChatResponse::Message(msg) => {
-            Ok(serde_json::json!({
-                "type": "message",
-                "content": msg
-            }))
-        }
-        crate::ai::ChatResponse::ToolCall {
-            server,
-            tool,
-            arguments,
-        } => {
-            // Execute the tool
+        crate::ai::ChatResponse::Message(msg) => Ok(serde_json::json!({
+            "type": "message",
+            "content": msg
+        })),
+        crate::ai::ChatResponse::ToolCall { server, tool, arguments } => {
             let tool_result = {
                 let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
                 manager.call_tool(&server, &tool, arguments.clone())
@@ -774,9 +766,7 @@ pub async fn mcp_ai_step(
 
             match tool_result {
                 Ok(result) => {
-                    let result_text = result
-                        .content
-                        .iter()
+                    let text = result.content.iter()
                         .filter_map(|c| c.text.as_ref())
                         .cloned()
                         .collect::<Vec<_>>()
@@ -787,20 +777,17 @@ pub async fn mcp_ai_step(
                         "server": server,
                         "tool": tool,
                         "arguments": arguments,
-                        "result": result_text,
+                        "result": text,
                         "is_error": result.is_error
                     }))
                 }
-                Err(e) => {
-                    // Return error so AI can retry with correct tool name
-                    Ok(serde_json::json!({
-                        "type": "tool_error",
-                        "server": server,
-                        "tool": tool,
-                        "arguments": arguments,
-                        "error": e
-                    }))
-                }
+                Err(e) => Ok(serde_json::json!({
+                    "type": "tool_error",
+                    "server": server,
+                    "tool": tool,
+                    "arguments": arguments,
+                    "error": e
+                })),
             }
         }
     }
