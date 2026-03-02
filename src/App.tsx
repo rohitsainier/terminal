@@ -15,6 +15,7 @@ import ParticleEngine from "./effects/ParticleEngine";
 import HologramEffect from "./effects/HologramEffect";
 import { useTheme } from "./hooks/useTheme";
 import ShortcutHelp from "./components/ShortcutHelp";
+import MCPPanel from "./components/MCPPanel";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
@@ -36,6 +37,7 @@ export default function App() {
   const [config, setConfig] = createSignal<any>(null);
   const [loaded, setLoaded] = createSignal(false);
   const [showShortcuts, setShowShortcuts] = createSignal(false);
+  const [showMCP, setShowMCP] = createSignal(false);
 
   // ── Theme via hook ──
   const theme = useTheme();
@@ -99,6 +101,10 @@ export default function App() {
         e.preventDefault();
         setShowShortcuts((v) => !v);
       }
+    } else if (mod && e.key === "m") {
+      e.preventDefault();
+      closeAllOverlays();
+      setShowMCP((v) => !v);
     }
   }
 
@@ -108,7 +114,8 @@ export default function App() {
     setShowSettings(false);
     setShowSnippets(false);
     setShowShortcuts(false);
-}
+    setShowMCP(false);
+  }
 
   function createTab() {
     const id = crypto.randomUUID();
@@ -193,6 +200,7 @@ export default function App() {
     else if (actionId === "toggle-matrix") toggleEffect("matrix");
     else if (actionId === "toggle-particles") toggleEffect("particles");
     else if (actionId === "toggle-hologram") toggleEffect("hologram");
+    else if (actionId === "mcp-panel") setShowMCP(true);
     else if (actionId.startsWith("theme-")) {
       handleThemeChange(actionId.replace("theme-", ""));
     }
@@ -324,6 +332,10 @@ export default function App() {
           visible={true}
           onClose={() => setShowShortcuts(false)}
         />
+      </Show>
+
+      <Show when={showMCP()}>
+        <MCPPanel onClose={() => setShowMCP(false)} />
       </Show>
     </div>
   );

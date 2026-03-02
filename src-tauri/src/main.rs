@@ -1,6 +1,7 @@
 mod ai;
 mod commands;
 mod config;
+mod mcp;
 mod pty;
 mod snippets;
 mod ssh;
@@ -9,11 +10,12 @@ mod terminal;
 use ai::AIEngine;
 use commands::AppState;
 use config::AppConfig;
+use mcp::MCPManager;
 use pty::PtyManager;
 use snippets::SnippetManager;
 use ssh::SSHManager;
-use terminal::SessionManager;
 use std::sync::Mutex;
+use terminal::SessionManager;
 
 fn main() {
     let config = AppConfig::load();
@@ -28,6 +30,10 @@ fn main() {
     let session_manager = SessionManager::new();
     let _ = session_manager.load_history();
 
+    let mut mcp_manager = MCPManager::new();
+    // Auto-start enabled MCP servers
+    mcp_manager.start_all_enabled();
+
     let state = AppState {
         pty_manager: PtyManager::new(),
         ai_engine: Mutex::new(ai_engine),
@@ -35,6 +41,7 @@ fn main() {
         snippet_manager: Mutex::new(snippet_manager),
         ssh_manager: Mutex::new(ssh_manager),
         session_manager: Mutex::new(session_manager),
+        mcp_manager: Mutex::new(mcp_manager),
     };
 
     tauri::Builder::default()
@@ -53,7 +60,7 @@ fn main() {
             commands::ai_explain_command,
             commands::ai_suggest_fix,
             commands::list_ollama_models,
-            // Config / Theme
+            // Config & Themes
             commands::get_config,
             commands::set_config,
             commands::list_themes,
@@ -64,9 +71,9 @@ fn main() {
             commands::delete_snippet,
             commands::run_snippet,
             commands::search_snippets,
-            commands::get_snippet_categories,
-            commands::import_snippets,
             commands::export_snippets,
+            commands::import_snippets,
+            commands::get_snippet_categories,
             // SSH
             commands::list_ssh_connections,
             commands::add_ssh_connection,
@@ -74,19 +81,29 @@ fn main() {
             commands::connect_ssh,
             commands::check_ssh_reachable,
             commands::get_known_hosts,
-            // Sessions / History
-            commands::list_active_sessions,
-            commands::update_session_info,
-            commands::add_history_entry,
+            // Sessions & History
+            commands::list_sessions,
             commands::search_history,
             commands::recent_history,
+            commands::add_history_entry,
             commands::unique_commands,
             commands::most_used_commands,
-            commands::save_all_history,
-            commands::clear_all_history,
-            // Terminal Utilities
+            commands::save_history,
+            commands::clear_history,
+            // System
             commands::list_available_shells,
-            commands::complete_path,
+            // MCP
+            commands::mcp_get_config,
+            commands::mcp_save_config,
+            commands::mcp_add_server,
+            commands::mcp_remove_server,
+            commands::mcp_start_server,
+            commands::mcp_stop_server,
+            commands::mcp_restart_server,
+            commands::mcp_list_servers,
+            commands::mcp_list_tools,
+            commands::mcp_call_tool,
+            commands::mcp_get_ai_context,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

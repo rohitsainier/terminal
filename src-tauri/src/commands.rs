@@ -15,6 +15,7 @@ pub struct AppState {
     pub snippet_manager: Mutex<SnippetManager>,
     pub ssh_manager: Mutex<SSHManager>,
     pub session_manager: Mutex<SessionManager>,
+    pub mcp_manager: Mutex<crate::mcp::MCPManager>,
 }
 
 // ─── PTY Commands ────────────────────────────────
@@ -241,6 +242,27 @@ pub fn get_known_hosts() -> Result<Vec<String>, String> {
 // ─── Session / History Commands ─────────────────
 
 #[tauri::command]
+pub fn list_sessions(
+    state: State<AppState>,
+) -> Result<Vec<crate::terminal::SessionInfo>, String> {
+    let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
+    Ok(manager.list_sessions())
+}
+
+#[tauri::command]
+pub fn save_history(state: State<AppState>) -> Result<(), String> {
+    let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
+    manager.save_history()
+}
+
+#[tauri::command]
+pub fn clear_history(state: State<AppState>) -> Result<(), String> {
+    let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
+    manager.clear_history();
+    manager.save_history()
+}
+
+#[tauri::command]
 pub fn list_active_sessions(state: State<AppState>) -> Result<Vec<SessionInfo>, String> {
     let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
     Ok(sm.list_sessions())
@@ -397,4 +419,96 @@ pub async fn complete_path(partial: String, cwd: Option<String>) -> Result<Vec<S
     })
     .await
     .map_err(|e| format!("Task error: {}", e))?
+}
+
+// ─── MCP Commands ───────────────────────────────
+
+#[tauri::command]
+pub fn mcp_get_config(state: State<AppState>) -> Result<crate::mcp::MCPConfig, String> {
+    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    Ok(manager.get_config())
+}
+
+#[tauri::command]
+pub fn mcp_save_config(
+    state: State<AppState>,
+    config: crate::mcp::MCPConfig,
+) -> Result<(), String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.set_config(config);
+    manager.save_config()
+}
+
+#[tauri::command]
+pub fn mcp_add_server(
+    state: State<AppState>,
+    name: String,
+    config: crate::mcp::MCPServerConfig,
+) -> Result<(), String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.add_server(name, config)
+}
+
+#[tauri::command]
+pub fn mcp_remove_server(state: State<AppState>, name: String) -> Result<(), String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.remove_server(&name)
+}
+
+#[tauri::command]
+pub fn mcp_start_server(state: State<AppState>, name: String) -> Result<(), String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.start_server(&name)
+}
+
+#[tauri::command]
+pub fn mcp_stop_server(state: State<AppState>, name: String) -> Result<(), String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.stop_server(&name)
+}
+
+#[tauri::command]
+pub fn mcp_restart_server(state: State<AppState>, name: String) -> Result<(), String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.restart_server(&name)
+}
+
+#[tauri::command]
+pub fn mcp_list_servers(
+    state: State<AppState>,
+) -> Result<Vec<crate::mcp::MCPServerInfo>, String> {
+    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    Ok(manager.list_server_statuses())
+}
+
+#[tauri::command]
+pub fn mcp_list_tools(
+    state: State<AppState>,
+    server: Option<String>,
+) -> Result<Vec<(String, crate::mcp::MCPTool)>, String> {
+    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+
+    if let Some(name) = server {
+        let tools = manager.list_server_tools(&name)?;
+        Ok(tools.into_iter().map(|t| (name.clone(), t)).collect())
+    } else {
+        Ok(manager.list_all_tools())
+    }
+}
+
+#[tauri::command]
+pub fn mcp_call_tool(
+    state: State<AppState>,
+    server: String,
+    tool: String,
+    arguments: serde_json::Value,
+) -> Result<crate::mcp::MCPToolResult, String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    manager.call_tool(&server, &tool, arguments)
+}
+
+#[tauri::command]
+pub fn mcp_get_ai_context(state: State<AppState>) -> Result<String, String> {
+    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    Ok(manager.get_tools_for_ai_context())
 }

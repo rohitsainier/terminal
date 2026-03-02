@@ -1006,3 +1006,476 @@
   opacity: 1;
   transform: scale(1.15);
 }
+
+/* ─── MCP Panel ──────────────────────── */
+
+.mcp-panel {
+  width: 680px;
+  max-height: 85vh;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+}
+
+.mcp-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: var(--tab-active);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  opacity: 0.6;
+}
+
+.mcp-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(255, 60, 60, 0.1);
+  border-bottom: 1px solid rgba(255, 60, 60, 0.2);
+  color: #ff6b6b;
+  font-size: 12px;
+}
+
+.mcp-error-close {
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 16px;
+}
+
+.mcp-error-close:hover {
+  opacity: 1;
+}
+
+.mcp-loading {
+  padding: 20px;
+  text-align: center;
+  opacity: 0.4;
+  font-size: 12px;
+}
+
+.mcp-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.mcp-add-form textarea {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  resize: vertical;
+}
+
+/* Server Cards */
+
+.mcp-server-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.mcp-server-card:hover {
+  border-color: var(--accent-dim);
+}
+
+.mcp-server-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px;
+  gap: 10px;
+}
+
+.mcp-server-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-server-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mcp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mcp-server-version {
+  font-size: 10px;
+  opacity: 0.35;
+  font-weight: 400;
+}
+
+.mcp-server-meta {
+  font-size: 10px;
+  opacity: 0.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-server-meta code {
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.mcp-server-desc {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-top: 4px;
+}
+
+.mcp-server-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mcp-btn {
+  padding: 4px 10px;
+  background: var(--tab-active);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.mcp-btn:hover {
+  border-color: var(--accent-dim);
+}
+
+.mcp-btn-start {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.mcp-btn-start:hover {
+  box-shadow: 0 0 10px var(--accent-dim);
+}
+
+.mcp-btn-stop {
+  border-color: #ff4444;
+  color: #ff6b6b;
+}
+
+.mcp-btn-delete {
+  opacity: 0.4;
+}
+
+.mcp-btn-delete:hover {
+  opacity: 1;
+  border-color: #ff4444;
+}
+
+/* Tools Preview */
+
+.mcp-tools-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--border);
+  align-items: center;
+}
+
+.mcp-tools-label {
+  font-size: 10px;
+  opacity: 0.4;
+  margin-right: 4px;
+}
+
+.mcp-tool-chip {
+  padding: 2px 8px;
+  background: var(--tab-active);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.1s;
+  color: var(--accent);
+}
+
+.mcp-tool-chip:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 6px var(--accent-dim);
+}
+
+.mcp-server-error {
+  padding: 6px 14px 10px;
+  font-size: 11px;
+  color: #ff6b6b;
+  border-top: 1px solid var(--border);
+}
+
+/* Tool List & Executor */
+
+.mcp-tools-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.mcp-tool-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.mcp-tool-item:last-child {
+  border-bottom: none;
+}
+
+.mcp-tool-item:hover {
+  background: var(--tab-active);
+}
+
+.mcp-tool-item.active {
+  background: var(--tab-active);
+  border-left: 3px solid var(--accent);
+}
+
+.mcp-tool-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mcp-tool-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcp-tool-server {
+  font-size: 10px;
+  opacity: 0.35;
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.mcp-tool-desc {
+  font-size: 11px;
+  opacity: 0.45;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.mcp-tool-executor {
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 10px;
+  background: var(--bg);
+}
+
+.mcp-executor-header {
+  font-size: 12px;
+  margin-bottom: 10px;
+  opacity: 0.8;
+}
+
+.mcp-executor-header strong {
+  color: var(--accent);
+}
+
+.mcp-schema-info {
+  padding: 8px 10px;
+  background: var(--panel-bg);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+
+.mcp-schema-label {
+  opacity: 0.5;
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.mcp-schema-param {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.mcp-schema-param code {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.mcp-schema-type {
+  font-size: 10px;
+  opacity: 0.3;
+  background: var(--bg);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.mcp-schema-required {
+  font-size: 9px;
+  color: #ff6b6b;
+  opacity: 0.7;
+}
+
+.mcp-schema-desc {
+  font-size: 10px;
+  opacity: 0.4;
+}
+
+.mcp-args-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+  margin-bottom: 10px;
+}
+
+.mcp-args-input:focus {
+  border-color: var(--accent);
+}
+
+/* Tool Result */
+
+.mcp-tool-result {
+  margin-top: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.mcp-tool-result.success {
+  border-color: #4caf5044;
+}
+
+.mcp-tool-result.error {
+  border-color: #ff444444;
+}
+
+.mcp-result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.mcp-result-content {
+  padding: 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 250px;
+  overflow-y: auto;
+  margin: 0;
+  line-height: 1.5;
+  color: var(--fg);
+  opacity: 0.85;
+}
+
+/* Config Editor */
+
+.mcp-config-editor {
+  width: 100%;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 300px;
+  outline: none;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.mcp-config-editor:focus {
+  border-color: var(--accent);
+}
+
+/* Empty State */
+
+.mcp-empty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.mcp-empty-hint {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-top: 8px;
+}
+
+.mcp-empty-hint code {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.mcp-example {
+  text-align: left;
+  margin-top: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.mcp-example p {
+  font-size: 10px;
+  opacity: 0.5;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.mcp-example pre {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--accent);
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}

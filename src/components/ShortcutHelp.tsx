@@ -47,6 +47,7 @@ export default function ShortcutHelp(props: Props) {
       icon: "🛠️",
       shortcuts: [
         { keys: "⌘/Ctrl + Shift + L", action: "Snippet Library" },
+        { keys: "⌘/Ctrl + M", action: "MCP Servers" },
       ],
     },
     {
