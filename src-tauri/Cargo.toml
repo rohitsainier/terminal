@@ -9,6 +9,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
+hostname = "0.4"
 
 # Terminal
 portable-pty = "0.8"

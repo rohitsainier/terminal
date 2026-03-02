@@ -17,6 +17,7 @@ import { useTheme } from "./hooks/useTheme";
 import ShortcutHelp from "./components/ShortcutHelp";
 import MCPPanel from "./components/MCPPanel";
 import MCPChat from "./components/MCPChat";
+import MonitorDashboard from "./components/MonitorDashboard";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
@@ -40,6 +41,7 @@ export default function App() {
   const [showShortcuts, setShowShortcuts] = createSignal(false);
   const [showMCP, setShowMCP] = createSignal(false);
   const [showMCPChat, setShowMCPChat] = createSignal(false);
+  const [showMonitor, setShowMonitor] = createSignal(false);
 
   // ── Theme via hook ──
   const theme = useTheme();
@@ -111,6 +113,9 @@ export default function App() {
       e.preventDefault();
       closeAllOverlays();
       setShowMCPChat((v) => !v);
+    } else if (mod && e.shiftKey && (e.key === "O" || e.key === "o")) {
+      e.preventDefault();
+      setShowMonitor((v) => !v);
     }
   }
 
@@ -122,6 +127,7 @@ export default function App() {
     setShowShortcuts(false);
     setShowMCP(false);
     setShowMCPChat(false);
+    setShowMonitor(false);
   }
 
   function createTab() {
@@ -209,6 +215,7 @@ export default function App() {
     else if (actionId === "toggle-hologram") toggleEffect("hologram");
     else if (actionId === "mcp-panel") setShowMCP(true);
     else if (actionId === "mcp-chat") setShowMCPChat(true);
+    else if (actionId === "monitor") setShowMonitor(true);
     else if (actionId.startsWith("theme-")) {
       handleThemeChange(actionId.replace("theme-", ""));
     }
@@ -351,6 +358,10 @@ export default function App() {
           onClose={() => setShowMCPChat(false)}
           onRunCommand={writeToActiveSession}
         />
+      </Show>
+
+      <Show when={showMonitor()}>
+        <MonitorDashboard onClose={() => setShowMonitor(false)} />
       </Show>
     </div>
   );
