@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -93,17 +92,6 @@ impl SSHManager {
         self.connections.clone()
     }
 
-    pub fn list_grouped(&self) -> HashMap<String, Vec<SSHConnection>> {
-        let mut groups: HashMap<String, Vec<SSHConnection>> = HashMap::new();
-
-        for conn in &self.connections {
-            let group = conn.group.clone().unwrap_or_else(|| "Ungrouped".into());
-            groups.entry(group).or_default().push(conn.clone());
-        }
-
-        groups
-    }
-
     pub fn get(&self, id: &str) -> Option<SSHConnection> {
         self.connections.iter().find(|c| c.id == id).cloned()
     }
@@ -114,17 +102,6 @@ impl SSHManager {
         }
 
         self.connections.push(connection);
-        self.save()
-    }
-
-    pub fn update(&mut self, connection: SSHConnection) -> Result<(), String> {
-        let pos = self
-            .connections
-            .iter()
-            .position(|c| c.id == connection.id)
-            .ok_or_else(|| format!("Connection not found: {}", connection.id))?;
-
-        self.connections[pos] = connection;
         self.save()
     }
 

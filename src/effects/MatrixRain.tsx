@@ -25,7 +25,7 @@ export default function MatrixRain(props: Props) {
     const drops: number[] = new Array(columns).fill(1);
 
     const chars =
-      "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF";
+      "ॐअआइईउऊऋएऐओऔकखगघचछजझटठडढणतथदधनपफबभमयरलवशषसहयोगधर्मध्यानशक्तिॐ☸🕉️";
 
     function draw() {
       ctx.fillStyle = `rgba(0, 0, 0, 0.05)`;

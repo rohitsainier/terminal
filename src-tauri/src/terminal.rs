@@ -100,19 +100,11 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn get_session(&self, id: &str) -> Option<SessionInfo> {
-        self.sessions.lock().ok()?.get(id).cloned()
-    }
-
     pub fn list_sessions(&self) -> Vec<SessionInfo> {
         self.sessions
             .lock()
             .map(|s| s.values().cloned().collect())
             .unwrap_or_default()
-    }
-
-    pub fn active_count(&self) -> usize {
-        self.sessions.lock().map(|s| s.len()).unwrap_or(0)
     }
 
     /// Fixed: clone session_id before moving entry
@@ -244,62 +236,6 @@ impl SessionManager {
     }
 }
 
-pub fn detect_cwd_from_output(output: &str) -> Option<String> {
-    for line in output.lines().rev() {
-        let line = line.trim();
-        if let Some(pos) = line.rfind(':') {
-            let after = &line[pos + 1..];
-            let path = after.trim_end_matches(|c: char| {
-                c == '$' || c == '#' || c == '❯' || c == '%' || c == ' '
-            });
-            if path.starts_with('~') || path.starts_with('/') {
-                return Some(path.to_string());
-            }
-        }
-        if line.ends_with('$')
-            || line.ends_with('#')
-            || line.ends_with('❯')
-            || line.ends_with('%')
-        {
-            let path = line.trim_end_matches(|c: char| {
-                c == '$' || c == '#' || c == '❯' || c == '%' || c == ' '
-            });
-            if path.starts_with('~') || path.starts_with('/') {
-                return Some(path.to_string());
-            }
-        }
-    }
-    None
-}
-
-pub fn detect_default_shell() -> String {
-    if let Ok(shell) = std::env::var("SHELL") {
-        return shell;
-    }
-    #[cfg(unix)]
-    {
-        if let Ok(user) = std::env::var("USER") {
-            if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
-                for line in passwd.lines() {
-                    if line.starts_with(&format!("{}:", user)) {
-                        if let Some(shell) = line.rsplit(':').next() {
-                            return shell.to_string();
-                        }
-                    }
-                }
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        if let Ok(comspec) = std::env::var("COMSPEC") {
-            return comspec;
-        }
-        return "cmd.exe".to_string();
-    }
-    "/bin/sh".to_string()
-}
-
 pub fn list_available_shells() -> Vec<String> {
     let mut shells = Vec::new();
     #[cfg(unix)]
@@ -353,18 +289,6 @@ pub fn list_available_shells() -> Vec<String> {
         }
     }
     shells
-}
-
-pub fn terminal_environment() -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    env.insert("TERM".into(), "xterm-256color".into());
-    env.insert("COLORTERM".into(), "truecolor".into());
-    env.insert("TERM_PROGRAM".into(), "FluxTerminal".into());
-    env.insert("TERM_PROGRAM_VERSION".into(), "0.1.0".into());
-    if std::env::var("LANG").is_err() {
-        env.insert("LANG".into(), "en_US.UTF-8".into());
-    }
-    env
 }
 
 fn now_iso() -> String {

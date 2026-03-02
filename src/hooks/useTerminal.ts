@@ -34,13 +34,6 @@ export function useTerminal(sessionId: string) {
     setIsConnected(false);
   }
 
-  async function updateInfo(title?: string, newCwd?: string) {
-    try {
-      await invoke("update_session_info", { id: sessionId, title: title || null, cwd: newCwd || null });
-      if (newCwd) setCwd(newCwd);
-    } catch (_) {}
-  }
-
   async function addToHistory(command: string) {
     try {
       await invoke("add_history_entry", {
@@ -103,7 +96,7 @@ export function useTerminal(sessionId: string) {
     write,
     resize,
     close,
-    updateInfo,
+
     addToHistory,
     getAutocompleteSuggestions,
   };

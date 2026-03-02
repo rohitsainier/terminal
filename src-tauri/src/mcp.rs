@@ -175,10 +175,6 @@ impl MCPManager {
         Ok(())
     }
 
-    pub fn reload_config(&mut self) {
-        self.config = Self::load_config_from_path(&self.config_path);
-    }
-
     pub fn set_config(&mut self, config: MCPConfig) {
         self.config = config;
     }
@@ -193,23 +189,6 @@ impl MCPManager {
         let _ = self.stop_server(name);
         self.config.servers.remove(name);
         self.save_config()
-    }
-
-    pub fn update_server(
-        &mut self,
-        name: &str,
-        config: MCPServerConfig,
-    ) -> Result<(), String> {
-        let was_running = self.connections.contains_key(name);
-        if was_running {
-            let _ = self.stop_server(name);
-        }
-        self.config.servers.insert(name.to_string(), config);
-        self.save_config()?;
-        if was_running {
-            let _ = self.start_server(name);
-        }
-        Ok(())
     }
 
     // ── Server Lifecycle ──

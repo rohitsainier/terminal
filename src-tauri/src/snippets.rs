@@ -98,17 +98,6 @@ impl SnippetManager {
         self.save()
     }
 
-    pub fn update(&mut self, snippet: Snippet) -> Result<(), String> {
-        let pos = self
-            .snippets
-            .iter()
-            .position(|s| s.id == snippet.id)
-            .ok_or_else(|| format!("Snippet not found: {}", snippet.id))?;
-
-        self.snippets[pos] = snippet;
-        self.save()
-    }
-
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         let len_before = self.snippets.len();
         self.snippets.retain(|s| s.id != id);
@@ -122,19 +111,6 @@ impl SnippetManager {
 
     pub fn get(&self, id: &str) -> Option<Snippet> {
         self.snippets.iter().find(|s| s.id == id).cloned()
-    }
-
-    pub fn get_by_category(&self, category: &str) -> Vec<Snippet> {
-        self.snippets
-            .iter()
-            .filter(|s| {
-                s.category
-                    .as_ref()
-                    .map(|c| c.to_lowercase() == category.to_lowercase())
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect()
     }
 
     pub fn get_categories(&self) -> Vec<String> {

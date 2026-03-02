@@ -3,7 +3,7 @@ use crate::config::AppConfig;
 use crate::pty::PtyManager;
 use crate::snippets::SnippetManager;
 use crate::ssh::{SSHConnection, SSHManager};
-use crate::terminal::{CommandHistoryEntry, SessionInfo, SessionManager};
+use crate::terminal::{CommandHistoryEntry, SessionManager};
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
@@ -262,22 +262,6 @@ pub fn clear_history(state: State<AppState>) -> Result<(), String> {
     manager.save_history()
 }
 
-#[tauri::command]
-pub fn list_active_sessions(state: State<AppState>) -> Result<Vec<SessionInfo>, String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
-    Ok(sm.list_sessions())
-}
-
-#[tauri::command]
-pub fn update_session_info(
-    state: State<AppState>,
-    id: String,
-    title: Option<String>,
-    cwd: Option<String>,
-) -> Result<(), String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
-    sm.update_session(&id, title, cwd, None)
-}
 
 #[tauri::command]
 pub fn add_history_entry(state: State<AppState>, entry: CommandHistoryEntry) -> Result<(), String> {
@@ -333,92 +317,11 @@ pub fn most_used_commands(
         .collect())
 }
 
-#[tauri::command]
-pub fn save_all_history(state: State<AppState>) -> Result<(), String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
-    sm.save_history()
-}
-
-#[tauri::command]
-pub fn clear_all_history(state: State<AppState>) -> Result<(), String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
-    sm.clear_history();
-    sm.save_history()
-}
-
 // ─── Terminal Utility Commands ──────────────────
 
 #[tauri::command]
 pub fn list_available_shells() -> Result<Vec<String>, String> {
     Ok(crate::terminal::list_available_shells())
-}
-
-#[tauri::command]
-pub async fn complete_path(partial: String, cwd: Option<String>) -> Result<Vec<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-        let base = cwd
-            .as_deref()
-            .map(|c| {
-                if c.starts_with('~') {
-                    home.join(c.trim_start_matches('~').trim_start_matches('/'))
-                } else {
-                    std::path::PathBuf::from(c)
-                }
-            })
-            .unwrap_or_else(|| home.clone());
-
-        let expanded = if partial.starts_with("~/") {
-            format!("{}/{}", home.display(), &partial[2..])
-        } else if partial == "~" {
-            format!("{}/", home.display())
-        } else if !partial.starts_with('/') && !partial.is_empty() {
-            format!("{}/{}", base.display(), partial)
-        } else if partial.is_empty() {
-            format!("{}/", base.display())
-        } else {
-            partial.clone()
-        };
-
-        let path = std::path::Path::new(&expanded);
-        let (dir, prefix) = if expanded.ends_with('/') || path.is_dir() {
-            (path.to_path_buf(), String::new())
-        } else {
-            (
-                path.parent()
-                    .unwrap_or(std::path::Path::new("/"))
-                    .to_path_buf(),
-                path.file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-            )
-        };
-
-        let mut results = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten().take(100) {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') && !prefix.starts_with('.') {
-                    continue;
-                }
-                if prefix.is_empty()
-                    || name.to_lowercase().starts_with(&prefix.to_lowercase())
-                {
-                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    results.push(if is_dir {
-                        format!("{}/", name)
-                    } else {
-                        name
-                    });
-                }
-            }
-        }
-        results.sort();
-        results.truncate(20);
-        Ok(results)
-    })
-    .await
-    .map_err(|e| format!("Task error: {}", e))?
 }
 
 // ─── MCP Commands ───────────────────────────────
