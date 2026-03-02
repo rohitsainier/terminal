@@ -16,6 +16,7 @@ import HologramEffect from "./effects/HologramEffect";
 import { useTheme } from "./hooks/useTheme";
 import ShortcutHelp from "./components/ShortcutHelp";
 import MCPPanel from "./components/MCPPanel";
+import MCPChat from "./components/MCPChat";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
@@ -38,6 +39,7 @@ export default function App() {
   const [loaded, setLoaded] = createSignal(false);
   const [showShortcuts, setShowShortcuts] = createSignal(false);
   const [showMCP, setShowMCP] = createSignal(false);
+  const [showMCPChat, setShowMCPChat] = createSignal(false);
 
   // ── Theme via hook ──
   const theme = useTheme();
@@ -105,6 +107,10 @@ export default function App() {
       e.preventDefault();
       closeAllOverlays();
       setShowMCP((v) => !v);
+    } else if (mod && e.shiftKey && (e.key === "C" || e.key === "c") && !e.altKey) {
+      e.preventDefault();
+      closeAllOverlays();
+      setShowMCPChat((v) => !v);
     }
   }
 
@@ -115,6 +121,7 @@ export default function App() {
     setShowSnippets(false);
     setShowShortcuts(false);
     setShowMCP(false);
+    setShowMCPChat(false);
   }
 
   function createTab() {
@@ -201,6 +208,7 @@ export default function App() {
     else if (actionId === "toggle-particles") toggleEffect("particles");
     else if (actionId === "toggle-hologram") toggleEffect("hologram");
     else if (actionId === "mcp-panel") setShowMCP(true);
+    else if (actionId === "mcp-chat") setShowMCPChat(true);
     else if (actionId.startsWith("theme-")) {
       handleThemeChange(actionId.replace("theme-", ""));
     }
@@ -336,6 +344,13 @@ export default function App() {
 
       <Show when={showMCP()}>
         <MCPPanel onClose={() => setShowMCP(false)} />
+      </Show>
+
+      <Show when={showMCPChat()}>
+        <MCPChat
+          onClose={() => setShowMCPChat(false)}
+          onRunCommand={writeToActiveSession}
+        />
       </Show>
     </div>
   );

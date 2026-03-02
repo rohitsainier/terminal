@@ -23,6 +23,25 @@ pub struct AIResponse {
     pub danger_reason: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type")]
+pub enum ChatResponse {
+    #[serde(rename = "message")]
+    Message(String),
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        server: String,
+        tool: String,
+        arguments: serde_json::Value,
+    },
+}
+
 impl AIEngine {
     pub fn new(provider: AIProvider) -> Self {
         let client = Client::builder()
@@ -424,6 +443,89 @@ Suggest the corrected command. Respond in JSON ONLY (no markdown):
             .map(|s| s.to_string())
             .ok_or_else(|| "No content in Anthropic response".to_string())
     }
+
+        /// Chat with AI, with MCP tool context and multi-turn support
+    pub async fn chat_with_tools(
+        &self,
+        messages: &[ChatMessage],
+        mcp_tools_context: &str,
+        os: &str,
+        shell: &str,
+    ) -> Result<ChatResponse, String> {
+        let system_prompt = format!(
+            r#"You are a helpful terminal assistant with access to MCP tools.
+
+OS: {}
+Shell: {}
+
+{}
+
+When you need to use a tool, respond with EXACTLY this JSON format (no markdown):
+{{"tool_call": {{"server": "server_name", "tool": "tool_name", "arguments": {{...}}}}}}
+
+When you have the final answer (or don't need tools), respond with:
+{{"message": "your response here"}}
+
+Rules:
+- If the user's request can be answered with a tool, use the tool
+- After receiving tool results, summarize them clearly
+- Always respond in one of the two JSON formats above
+- No markdown code blocks, just raw JSON"#,
+            os, shell, mcp_tools_context
+        );
+
+        // Build conversation for the AI
+        let user_prompt = messages
+            .iter()
+            .map(|m| match m.role.as_str() {
+                "user" => format!("User: {}", m.content),
+                "assistant" => format!("Assistant: {}", m.content),
+                "tool_result" => format!("Tool Result: {}", m.content),
+                _ => format!("{}: {}", m.role, m.content),
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let response_text = self
+            .call_provider(&system_prompt, &user_prompt)
+            .await?;
+
+        // Parse the response
+        let cleaned = extract_json_from_text(&response_text);
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+            // Check if it's a tool call
+            if let Some(tool_call) = value.get("tool_call") {
+                let server = tool_call["server"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let tool = tool_call["tool"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let arguments = tool_call["arguments"].clone();
+
+                return Ok(ChatResponse::ToolCall {
+                    server,
+                    tool,
+                    arguments: if arguments.is_null() {
+                        serde_json::json!({})
+                    } else {
+                        arguments
+                    },
+                });
+            }
+
+            // Check if it's a message
+            if let Some(msg) = value["message"].as_str() {
+                return Ok(ChatResponse::Message(msg.to_string()));
+            }
+        }
+
+        // Fallback: treat entire response as a message
+        Ok(ChatResponse::Message(response_text))
+    }
 }
 
 // ─── Helper Functions ─────────────────────────────
@@ -599,3 +701,4 @@ pub async fn list_ollama_models(base_url: &str) -> Result<Vec<String>, String> {
 
     Ok(models)
 }
+

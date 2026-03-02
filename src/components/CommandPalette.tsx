@@ -34,6 +34,7 @@ export default function CommandPalette(props: Props) {
     { id: "toggle-hologram", icon: "🔮", label: "Toggle Hologram Effect" },
     { id: "settings", icon: "⚙️", label: "Settings", shortcut: "⌘," },
     { id: "mcp-panel", icon: "🔌", label: "MCP Servers", shortcut: "⌘M" },
+    { id: "mcp-chat", icon: "🤖", label: "AI + MCP Chat", shortcut: "⌘⇧C" },
   ];
 
   const filtered = createMemo(() => {

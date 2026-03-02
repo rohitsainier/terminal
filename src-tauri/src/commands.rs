@@ -512,3 +512,127 @@ pub fn mcp_get_ai_context(state: State<AppState>) -> Result<String, String> {
     let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
     Ok(manager.get_tools_for_ai_context())
 }
+
+// ─── MCP + AI Chat ──────────────────────────────
+
+#[tauri::command]
+pub async fn mcp_ai_chat(
+    state: State<'_, AppState>,
+    messages: Vec<crate::ai::ChatMessage>,
+) -> Result<serde_json::Value, String> {
+    // Get AI engine
+    let engine = {
+        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
+        guard
+            .clone()
+            .ok_or("AI not configured. Set up a provider in Settings.")?
+    };
+
+    // Get MCP tool context
+    let mcp_context = {
+        let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+        manager.get_tools_for_ai_context()
+    };
+
+    let os = std::env::consts::OS;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+
+    // Call AI with tool context
+    let response = engine
+        .chat_with_tools(&messages, &mcp_context, os, &shell)
+        .await?;
+
+    match response {
+        crate::ai::ChatResponse::Message(msg) => {
+            Ok(serde_json::json!({
+                "type": "message",
+                "content": msg
+            }))
+        }
+        crate::ai::ChatResponse::ToolCall {
+            server,
+            tool,
+            arguments,
+        } => {
+            // Auto-execute the tool call
+            let tool_result = {
+                let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+                manager.call_tool(&server, &tool, arguments.clone())
+            };
+
+            match tool_result {
+                Ok(result) => {
+                    let result_text = result
+                        .content
+                        .iter()
+                        .filter_map(|c| c.text.as_ref())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    Ok(serde_json::json!({
+                        "type": "tool_call",
+                        "server": server,
+                        "tool": tool,
+                        "arguments": arguments,
+                        "result": result_text,
+                        "is_error": result.is_error
+                    }))
+                }
+                Err(e) => {
+                    Ok(serde_json::json!({
+                        "type": "tool_call",
+                        "server": server,
+                        "tool": tool,
+                        "arguments": arguments,
+                        "result": format!("Error: {}", e),
+                        "is_error": true
+                    }))
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_ai_followup(
+    state: State<'_, AppState>,
+    messages: Vec<crate::ai::ChatMessage>,
+    tool_result: String,
+) -> Result<String, String> {
+    let engine = {
+        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
+        guard.clone().ok_or("AI not configured")?
+    };
+
+    let mcp_context = {
+        let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+        manager.get_tools_for_ai_context()
+    };
+
+    // Add tool result to conversation and ask AI to summarize
+    let mut all_messages = messages;
+    all_messages.push(crate::ai::ChatMessage {
+        role: "tool_result".to_string(),
+        content: tool_result,
+    });
+    all_messages.push(crate::ai::ChatMessage {
+        role: "user".to_string(),
+        content: "Based on the tool result above, provide a clear summary. Respond with: {\"message\": \"your summary\"}".to_string(),
+    });
+
+    let os = std::env::consts::OS;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+
+    let response = engine
+        .chat_with_tools(&all_messages, &mcp_context, os, &shell)
+        .await?;
+
+    match response {
+        crate::ai::ChatResponse::Message(msg) => Ok(msg),
+        crate::ai::ChatResponse::ToolCall { .. } => {
+            // If AI wants another tool call, just return the raw result
+            Ok("Tool call completed. See the result above.".to_string())
+        }
+    }
+}
