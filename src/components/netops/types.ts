@@ -3,9 +3,10 @@ import type { Accessor, Setter } from "solid-js";
 // ═══ Tool identifiers ═══
 
 export type NetopsTool =
-  | "ping" | "portscan" | "dns" | "whois" | "wifi"
+  | "ping" | "portscan" | "dns" | "whois" | "wifi" | "wifiauth"
   | "httpheaders" | "ssl" | "geoip" | "arp"
-  | "subnet" | "reversedns" | "traceroute";
+  | "subnet" | "reversedns" | "traceroute"
+  | "traffic" | "rogueap" | "logs" | "threatfeed" | "secscore" | "incidents";
 
 // ═══ Result types (mirror Rust structs) ═══
 
@@ -144,6 +145,135 @@ export interface TracerouteResult {
   completed: boolean;
 }
 
+export interface WifiAuthEvent {
+  timestamp: string;
+  event_type: string;
+  message: string;
+}
+
+export interface WifiAuthMonitorResult {
+  time_window_hours: number;
+  events: WifiAuthEvent[];
+  total_failures: number;
+  total_events: number;
+  query_time_ms: number;
+}
+
+// ═══ Traffic Anomaly Detection ═══
+
+export interface SuspiciousConnection {
+  process: string;
+  pid: string;
+  protocol: string;
+  local_addr: string;
+  foreign_addr: string;
+  port: number;
+  reason: string;
+  threat_level: string;
+}
+
+export interface TrafficAnomalyResult {
+  connections: SuspiciousConnection[];
+  total_connections: number;
+  suspicious_count: number;
+  scan_time_ms: number;
+}
+
+// ═══ Rogue AP Detection ═══
+
+export interface ApStatus {
+  ssid: string;
+  bssid: string;
+  rssi: number;
+  channel: number;
+  security: string;
+  status: string;
+  reason: string;
+}
+
+export interface RogueApResult {
+  known_count: number;
+  unknown_count: number;
+  spoofed_count: number;
+  networks: ApStatus[];
+  baseline_exists: boolean;
+}
+
+// ═══ Log Aggregation ═══
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  subsystem: string;
+  process: string;
+  message: string;
+}
+
+export interface SystemLogsResult {
+  filter: string;
+  entries: LogEntry[];
+  total_count: number;
+  query_time_ms: number;
+}
+
+// ═══ Threat Intelligence ═══
+
+export interface ThreatSource {
+  name: string;
+  listed: boolean;
+  category: string;
+  details: string;
+}
+
+export interface ThreatCheckResult {
+  indicator: string;
+  threat_score: number;
+  is_threat: boolean;
+  sources: ThreatSource[];
+  open_ports: number[];
+  vulns: string[];
+  hostnames: string[];
+  query_time_ms: number;
+}
+
+// ═══ Security Score ═══
+
+export interface SecurityCheck {
+  name: string;
+  category: string;
+  status: string;
+  detail: string;
+  weight: number;
+}
+
+export interface SecurityScoreResult {
+  overall_score: number;
+  grade: string;
+  checks: SecurityCheck[];
+  passed: number;
+  failed: number;
+  warned: number;
+  total: number;
+}
+
+// ═══ Incident Tracking ═══
+
+export interface IncidentNote {
+  timestamp: string;
+  content: string;
+}
+
+export interface SecurityIncident {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  severity: string;
+  title: string;
+  description: string;
+  status: string;
+  notes: IncidentNote[];
+}
+
 // ═══ Discriminated union for results ═══
 
 export type ToolResult =
@@ -158,7 +288,14 @@ export type ToolResult =
   | { kind: "arp"; data: ArpEntry[] }
   | { kind: "subnet"; data: SubnetCalcResult }
   | { kind: "reversedns"; data: ReverseDnsResult }
-  | { kind: "traceroute"; data: TracerouteResult };
+  | { kind: "traceroute"; data: TracerouteResult }
+  | { kind: "wifiauth"; data: WifiAuthMonitorResult }
+  | { kind: "traffic"; data: TrafficAnomalyResult }
+  | { kind: "rogueap"; data: RogueApResult }
+  | { kind: "logs"; data: SystemLogsResult }
+  | { kind: "threatfeed"; data: ThreatCheckResult }
+  | { kind: "secscore"; data: SecurityScoreResult }
+  | { kind: "incidents"; data: SecurityIncident[] };
 
 export interface HistoryEntry {
   tool: NetopsTool;

@@ -63,6 +63,21 @@
   user-select: none;
 }
 
+/* Allow text selection in result areas */
+.nops-output,
+.nops-results,
+.nops-table,
+.nops-kv,
+.nops-list-item,
+.nops-error,
+.nops-no-data,
+.nops-result-summary,
+.nops-help-section {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
 /* ─── Scanlines & Vignette ─── */
 .nops-scanlines {
   position: absolute;
@@ -713,6 +728,154 @@
 
 .nops-status-sep {
   color: rgba(0, 212, 255, 0.2);
+}
+
+/* ─── Security Score Gauge ─── */
+.nops-score-gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+  margin-bottom: 8px;
+}
+
+.nops-score-num {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  line-height: 1;
+}
+
+.nops-grade-letter {
+  font-size: 28px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.nops-score-label {
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  letter-spacing: 2px;
+  margin-top: 6px;
+}
+
+.nops-score-safe     { color: var(--nops-success); text-shadow: 0 0 20px rgba(34, 197, 94, 0.4); }
+.nops-score-warn     { color: var(--nops-warning); text-shadow: 0 0 20px rgba(245, 158, 11, 0.4); }
+.nops-score-critical { color: var(--nops-danger);  text-shadow: 0 0 20px rgba(239, 68, 68, 0.4); }
+
+.nops-grade-a { color: var(--nops-success); }
+.nops-grade-b { color: var(--nops-primary); }
+.nops-grade-c { color: var(--nops-warning); }
+.nops-grade-d { color: #f97316; }
+.nops-grade-f { color: var(--nops-danger); }
+
+/* ─── Log Entries ─── */
+.nops-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nops-log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 10px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.nops-log-time {
+  color: var(--nops-text-dim);
+  font-size: 9px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.nops-log-level {
+  font-weight: 700;
+  font-size: 9px;
+  flex-shrink: 0;
+  min-width: 42px;
+  text-align: center;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.nops-log-level-error,
+.nops-log-level-fault   { color: var(--nops-danger); background: rgba(239, 68, 68, 0.1); }
+.nops-log-level-warning { color: var(--nops-warning); background: rgba(245, 158, 11, 0.1); }
+.nops-log-level-info,
+.nops-log-level-default { color: var(--nops-text-dim); }
+
+.nops-log-proc {
+  color: var(--nops-primary);
+  font-size: 9px;
+  flex-shrink: 0;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nops-log-msg {
+  color: var(--nops-text);
+  font-size: 10px;
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ─── Incident Cards ─── */
+.nops-incident-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 10px;
+  font-size: 10px;
+  color: var(--nops-text-dim);
+}
+
+.nops-incident-card {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--nops-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+}
+
+.nops-incident-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.nops-incident-id {
+  font-size: 9px;
+  color: var(--nops-text-dim);
+  font-family: var(--nops-font);
+  margin-left: auto;
+}
+
+.nops-incident-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nops-text-white);
+  margin-bottom: 4px;
+}
+
+.nops-incident-desc {
+  font-size: 10px;
+  color: var(--nops-text);
+  margin-bottom: 4px;
+}
+
+.nops-incident-meta {
+  font-size: 9px;
+  color: var(--nops-text-dim);
+  margin-top: 4px;
 }
 
 /* ─── Responsive ─── */

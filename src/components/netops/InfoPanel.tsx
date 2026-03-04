@@ -18,6 +18,13 @@ const TOOL_HELP: Record<NetopsTool, { title: string; desc: string; usage: string
   subnet:      { title: "Subnet Calculator", desc: "Computes network range, broadcast, host count, netmask, and wildcard from CIDR notation.", usage: "Enter a CIDR notation", example: "192.168.1.0/24" },
   reversedns:  { title: "Reverse DNS",     desc: "Resolves an IP address to its hostname(s) using PTR records.", usage: "Enter an IP address", example: "8.8.8.8" },
   traceroute:  { title: "Traceroute",       desc: "Traces the network path to a target, showing each hop with latency.", usage: "Enter a hostname or IP", example: "google.com" },
+  wifiauth:    { title: "WiFi Auth Monitor", desc: "Monitors WiFi authentication events from macOS system logs. Shows failures, deauthentications, and association events.", usage: "Optionally enter time window in hours (1-24). Click Run to scan logs.", example: "" },
+  traffic:     { title: "Traffic Anomalies", desc: "Captures network connections via lsof and flags suspicious patterns — high ports, IRC, BitTorrent, many connections to same IP.", usage: "No input needed — click Run to scan.", example: "" },
+  rogueap:     { title: "Rogue AP Detect", desc: "WiFi scan compared against stored baseline. Flags unknown and potentially spoofed (evil twin) access points.", usage: "Select Scan or Save Baseline. Save first to establish trusted APs.", example: "" },
+  logs:        { title: "Log Viewer", desc: "Queries macOS system logs for security-relevant events. Filter by category: security, network, firewall, auth, or all.", usage: "Select filter category from dropdown. Click Run.", example: "" },
+  threatfeed:  { title: "Threat Intel", desc: "Checks an IP against public threat feeds (Shodan InternetDB, Spamhaus, abuse.ch). Shows open ports, vulns, and threat score.", usage: "Enter an IP address", example: "8.8.8.8" },
+  secscore:    { title: "Security Score", desc: "Comprehensive local security assessment. Checks firewall, FileVault, SIP, Gatekeeper, auto-updates, and more.", usage: "No input needed — click Run to assess.", example: "" },
+  incidents:   { title: "Incidents", desc: "Local incident management. Create, list, and update security incidents with severity and status tracking.", usage: "Empty = list all. 'new:severity:title:desc' to create. 'update:ID:status:note' to update.", example: "new:high:Suspicious login:Multiple failed SSH attempts" },
 };
 
 export default function InfoPanel(props: Props) {

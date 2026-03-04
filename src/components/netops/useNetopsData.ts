@@ -4,7 +4,10 @@ import type {
   NetopsTool, ToolResult, PingResult, PortScanResult,
   DnsLookupResult, WhoisResult, WifiNetwork, HttpHeaderResult,
   SslCertInfo, GeoIpResult, ArpEntry, SubnetCalcResult,
-  ReverseDnsResult, TracerouteResult, HistoryEntry, NetopsStore,
+  ReverseDnsResult, TracerouteResult, WifiAuthMonitorResult,
+  TrafficAnomalyResult, RogueApResult, SystemLogsResult,
+  ThreatCheckResult, SecurityScoreResult, SecurityIncident,
+  HistoryEntry, NetopsStore,
 } from "./types";
 
 export function useNetopsData(): NetopsStore {
@@ -31,7 +34,7 @@ export function useNetopsData(): NetopsStore {
     if (loading()) return;
 
     // Tools that don't need a target
-    const noTargetTools: NetopsTool[] = ["wifi", "arp"];
+    const noTargetTools: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents"];
     if (!noTargetTools.includes(tool) && !tgt) {
       setError("Target is required");
       return;
@@ -106,6 +109,68 @@ export function useNetopsData(): NetopsStore {
         case "traceroute": {
           const data = await invoke<TracerouteResult>("netops_traceroute", { target: tgt });
           setResult({ kind: "traceroute", data });
+          break;
+        }
+        case "wifiauth": {
+          const timeWindow = extraParam() ? parseInt(extraParam()) : undefined;
+          const data = await invoke<WifiAuthMonitorResult>("netops_wifi_auth_monitor", {
+            timeWindow: timeWindow && !isNaN(timeWindow) ? timeWindow : null,
+          });
+          setResult({ kind: "wifiauth", data });
+          break;
+        }
+        case "traffic": {
+          const data = await invoke<TrafficAnomalyResult>("netops_traffic_anomalies");
+          setResult({ kind: "traffic", data });
+          break;
+        }
+        case "rogueap": {
+          const mode = extraParam() || "scan";
+          if (mode === "save") {
+            await invoke<string>("netops_rogue_ap_save_baseline");
+            const data = await invoke<RogueApResult>("netops_rogue_ap_scan");
+            setResult({ kind: "rogueap", data });
+          } else {
+            const data = await invoke<RogueApResult>("netops_rogue_ap_scan");
+            setResult({ kind: "rogueap", data });
+          }
+          break;
+        }
+        case "logs": {
+          const filter = extraParam() || "all";
+          const data = await invoke<SystemLogsResult>("netops_system_logs", { filter });
+          setResult({ kind: "logs", data });
+          break;
+        }
+        case "threatfeed": {
+          const data = await invoke<ThreatCheckResult>("netops_threat_check", { indicator: tgt });
+          setResult({ kind: "threatfeed", data });
+          break;
+        }
+        case "secscore": {
+          const data = await invoke<SecurityScoreResult>("netops_security_score");
+          setResult({ kind: "secscore", data });
+          break;
+        }
+        case "incidents": {
+          if (tgt.startsWith("new:")) {
+            const parts = tgt.split(":");
+            const severity = parts[1] || "medium";
+            const title = parts[2] || "Untitled";
+            const description = parts.slice(3).join(":") || "";
+            const data = await invoke<SecurityIncident[]>("netops_incident_create", { severity, title, description });
+            setResult({ kind: "incidents", data });
+          } else if (tgt.startsWith("update:")) {
+            const parts = tgt.split(":");
+            const id = parts[1] || "";
+            const status = parts[2] || "investigating";
+            const note = parts.slice(3).join(":") || "";
+            const data = await invoke<SecurityIncident[]>("netops_incident_update", { id, status, note: note || null });
+            setResult({ kind: "incidents", data });
+          } else {
+            const data = await invoke<SecurityIncident[]>("netops_incident_list");
+            setResult({ kind: "incidents", data });
+          }
           break;
         }
       }

@@ -133,6 +133,7 @@ fn main() {
             netops::netops_dns_lookup,
             netops::netops_whois,
             netops::netops_wifi_scan,
+            netops::netops_wifi_auth_monitor,
             netops::netops_http_headers,
             netops::netops_ssl_inspect,
             netops::netops_ip_geolocate,
@@ -140,6 +141,15 @@ fn main() {
             netops::netops_subnet_calc,
             netops::netops_reverse_dns,
             netops::netops_traceroute,
+            netops::netops_traffic_anomalies,
+            netops::netops_rogue_ap_scan,
+            netops::netops_rogue_ap_save_baseline,
+            netops::netops_system_logs,
+            netops::netops_threat_check,
+            netops::netops_security_score,
+            netops::netops_incident_list,
+            netops::netops_incident_create,
+            netops::netops_incident_update,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

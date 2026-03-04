@@ -44,18 +44,15 @@ src/                        # Frontend (SolidJS + TypeScript)
   hooks/                    # SolidJS hooks (useTheme, useTerminal, useAI)
   effects/                  # Visual effects (CRT, Glow, MatrixRain, Particles, Hologram)
   themes/                   # Theme JSON files + ThemeEngine
-    netops/                 # NETOPS Dashboard (network operations tools)
+    netops/                 # NETOPS Dashboard (network operations + security tools)
       index.ts              # Barrel export
-      types.ts              # Interfaces, NetopsTool union, NetopsStore type
+      types.ts              # Interfaces, NetopsTool union (19 tools), NetopsStore type
       useNetopsData.ts      # Signals, runTool(), history management
       TopBar.tsx            # Top bar (logo, LIVE badge, UTC clock)
-      ToolPanel.tsx         # Left panel (12 tool rows with icons)
+      ToolPanel.tsx         # Left panel (19 tool rows with icons)
       ResultPanel.tsx       # Center panel (input bar + result renderers per tool)
       InfoPanel.tsx         # Right panel (tool help + scan history)
       NetopsDashboard.tsx   # Orchestrator (keyboard, layout)
-  hooks/                    # SolidJS hooks (useTheme, useTerminal, useAI)
-  effects/                  # Visual effects (CRT, Glow, MatrixRain, Particles, Hologram)
-  themes/                   # Theme JSON files + ThemeEngine
   styles/                   # Global CSS (global.css, terminal.css, effects.css, monitor.css, netops.css)
 src-tauri/                  # Rust backend
   src/main.rs               # Tauri app setup
@@ -68,7 +65,8 @@ src-tauri/                  # Rust backend
   src/ssh.rs                 # SSH connections
   src/mcp.rs                 # Model Context Protocol
   src/monitor.rs             # Monitor API commands (ISS, weather, quakes, crypto, flights, net throughput, speedtest)
-  src/netops.rs              # NETOPS commands (ping, port scan, DNS, whois, WiFi, HTTP headers, SSL, geoIP, ARP, subnet calc, reverse DNS, traceroute)
+  src/netops.rs              # NETOPS commands (19 tools: ping, port scan, DNS, whois, WiFi scan, WiFi auth, HTTP headers, SSL, geoIP, ARP, subnet calc, reverse DNS, traceroute, traffic anomalies, rogue AP, log viewer, threat intel, security score, incidents)
+  src/wifi_scan.swift        # CoreWLAN WiFi scanner (embedded via include_str!)
 ```
 
 ## Code Conventions
@@ -101,3 +99,5 @@ src-tauri/                  # Rust backend
 - **Themes:** 6 JSON theme files loaded by ThemeEngine
 - **Config:** Stored in OS config directory via `dirs` crate, hot-reloadable
 - **Monitor Dashboard:** 7 modes (INTEL, CYBER, SAT, FLIGHTS, CAMS, WEATHER, QUAKE) with 3D globe (globe.gl). State managed via `useMonitorData` hook returning a `MonitorStore` object passed as props. Globe logic is imperative (not JSX) in `globeManager.ts`. Rust backend uses `OnceLock<Mutex<Option<CacheEntry<T>>>>` caching pattern with TTL. Free APIs: Open-Meteo (weather), USGS (earthquakes), CoinGecko (crypto), OpenSky (flights), CelesTrak (satellites). Features: Cloudflare CDN speedtest, real network throughput monitoring (toggle-based with `sysinfo` crate), fullscreen panel mode (double-click to expand any panel)
+- **NETOPS Dashboard:** 19 network/security tools (⌘⇧N). Same architecture as Monitor: `useNetopsData` hook → `NetopsStore` object → props. Rust backend uses `tokio::process::Command` for system tools (dig, whois, arp, traceroute, openssl) and `reqwest` for HTTP-based tools (ping, headers, geoip, threat intel). WiFi scanning via CoreWLAN Swift script (`wifi_scan.swift` embedded with `include_str!`). Caching for whois, geoip, & threat intel (1hr TTL). Port scan uses concurrent `tokio::net::TcpStream::connect()`. Persistent JSON storage in `dirs::config_dir()/flux-terminal/` for WiFi baselines and incidents. Tools: ping, port scan, DNS lookup, WHOIS, WiFi scan, WiFi auth monitor, HTTP headers, SSL inspect, IP geolocation, ARP table, subnet calc, reverse DNS, traceroute, traffic anomaly detection, rogue AP detection, system log viewer, threat intelligence, security score, incident tracking
+- **Dashboard Color Scheme:** Both Monitor and NETOPS dashboards share a unified cyan `#00d4ff` color scheme. Monitor uses `--fcmd-*` CSS variables, NETOPS uses `--nops-*` CSS variables

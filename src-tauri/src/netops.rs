@@ -519,66 +519,162 @@ pub async fn netops_whois(domain: String) -> Result<WhoisResult, String> {
 
 #[tauri::command]
 pub async fn netops_wifi_scan() -> Result<Vec<WifiNetwork>, String> {
-    let output = tokio::process::Command::new(
-        "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport",
-    )
-    .arg("-s")
-    .output()
-    .await
-    .map_err(|e| format!("airport scan: {}", e))?;
+    // Use CoreWLAN via Swift — the legacy `airport` binary was removed in modern macOS
+    // Security type is read via KVC (value(forKey:)) since the public Swift API removed the property
+    let swift_code = include_str!("wifi_scan.swift");
+
+    let output = tokio::process::Command::new("swift")
+        .arg("-e")
+        .arg(swift_code)
+        .output()
+        .await
+        .map_err(|e| format!("swift wifi scan: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("WiFi scan failed: {}", stderr));
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut networks = Vec::new();
 
-    for (i, line) in stdout.lines().enumerate() {
-        if i == 0 {
-            continue; // skip header
-        }
+    for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
 
-        // airport output is fixed-width: SSID takes first 33 chars, then BSSID, RSSI, CHANNEL, HT, CC, SECURITY
-        // But SSID can have spaces, so we parse from the right side
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.len() < 6 {
+        // Format: SSID|BSSID|RSSI|CHANNEL|SECURITY
+        let parts: Vec<&str> = trimmed.split('|').collect();
+        if parts.len() < 5 {
             continue;
         }
 
-        // Find BSSID (MAC format xx:xx:xx:xx:xx:xx) to anchor parsing
-        let bssid_idx = parts.iter().position(|p| p.matches(':').count() == 5);
-        if let Some(bi) = bssid_idx {
-            let ssid = if bi > 0 {
-                parts[..bi].join(" ")
-            } else {
-                "(hidden)".into()
-            };
-            let bssid = parts[bi].to_string();
-            let rssi = parts.get(bi + 1).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
-            let channel = parts.get(bi + 2).and_then(|s| {
-                // Channel can be like "1" or "1,+1" — take first number
-                s.split(',').next().and_then(|c| c.parse::<u32>().ok())
-            }).unwrap_or(0);
-            // Security is everything after HT and CC columns
-            let security = if parts.len() > bi + 5 {
-                parts[bi + 5..].join(" ")
-            } else {
-                "Unknown".into()
-            };
-
-            networks.push(WifiNetwork {
-                ssid,
-                bssid,
-                rssi,
-                channel,
-                security,
-            });
-        }
+        networks.push(WifiNetwork {
+            ssid: parts[0].to_string(),
+            bssid: parts[1].to_string(),
+            rssi: parts[2].parse::<i32>().unwrap_or(0),
+            channel: parts[3].parse::<u32>().unwrap_or(0),
+            security: parts[4].to_string(),
+        });
     }
 
-    networks.sort_by(|a, b| b.rssi.cmp(&a.rssi));
     Ok(networks)
+}
+
+// ─── WiFi Auth Monitor ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WifiAuthEvent {
+    pub timestamp: String,
+    pub event_type: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WifiAuthMonitorResult {
+    pub time_window_hours: u32,
+    pub events: Vec<WifiAuthEvent>,
+    pub total_failures: u32,
+    pub total_events: u32,
+    pub query_time_ms: u64,
+}
+
+#[tauri::command]
+pub async fn netops_wifi_auth_monitor(time_window: Option<u32>) -> Result<WifiAuthMonitorResult, String> {
+    let hours = time_window.unwrap_or(1).min(24).max(1);
+    let start = std::time::Instant::now();
+
+    let predicate = r#"subsystem == "com.apple.wifi" AND (eventMessage CONTAINS "auth" OR eventMessage CONTAINS "association" OR eventMessage CONTAINS "deauth" OR eventMessage CONTAINS "disassoc")"#;
+
+    let output = tokio::process::Command::new("log")
+        .args([
+            "show",
+            "--predicate",
+            predicate,
+            "--last",
+            &format!("{}h", hours),
+            "--style",
+            "compact",
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("log command: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("log command failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut events = Vec::new();
+    let mut total_failures: u32 = 0;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("Timestamp") || trimmed.starts_with("---") || trimmed.starts_with("Filtering") {
+            continue;
+        }
+
+        // Compact format: "2024-01-01 12:00:00.000000+0000 ... message"
+        // Extract timestamp (first ~31 chars) and the rest as message
+        let (timestamp, message) = if trimmed.len() > 31 {
+            let ts = trimmed[..31].trim().to_string();
+            // Skip process info columns, find the message part
+            let rest = &trimmed[31..];
+            let msg = rest.trim().to_string();
+            (ts, msg)
+        } else {
+            continue;
+        };
+
+        let lower = message.to_lowercase();
+        let event_type = if lower.contains("fail") || lower.contains("error") || lower.contains("rejected") {
+            "failure"
+        } else if lower.contains("deauth") || lower.contains("disassoc") {
+            "deauth"
+        } else if lower.contains("timeout") {
+            "timeout"
+        } else if lower.contains("success") || lower.contains("associated") || lower.contains("completed") {
+            "success"
+        } else {
+            "other"
+        };
+
+        if event_type == "failure" || event_type == "deauth" || event_type == "timeout" {
+            total_failures += 1;
+        }
+
+        // Truncate very long messages
+        let truncated_msg = if message.len() > 200 {
+            format!("{}...", &message[..200])
+        } else {
+            message
+        };
+
+        events.push(WifiAuthEvent {
+            timestamp,
+            event_type: event_type.into(),
+            message: truncated_msg,
+        });
+    }
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    let total_events = events.len() as u32;
+
+    // Most recent first
+    events.reverse();
+
+    // Cap at 500 events to avoid huge payloads
+    events.truncate(500);
+
+    Ok(WifiAuthMonitorResult {
+        time_window_hours: hours,
+        events,
+        total_failures,
+        total_events,
+        query_time_ms: elapsed,
+    })
 }
 
 // ─── HTTP Headers ────────────────────────────────────────────────
@@ -1039,4 +1135,863 @@ pub async fn netops_traceroute(target: String) -> Result<TracerouteResult, Strin
         hops,
         completed,
     })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 14: Suspicious Traffic Anomaly Detection
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuspiciousConnection {
+    pub process: String,
+    pub pid: u32,
+    pub protocol: String,
+    pub local_addr: String,
+    pub foreign_addr: String,
+    pub port: u16,
+    pub reason: String,
+    pub threat_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrafficAnomalyResult {
+    pub connections: Vec<SuspiciousConnection>,
+    pub total_connections: u32,
+    pub suspicious_count: u32,
+    pub scan_time_ms: u64,
+}
+
+const SUSPICIOUS_PORTS: &[u16] = &[
+    4444, 5555, 6667, 6668, 6669, // Metasploit, IRC
+    6881, 6882, 6883, 6884, 6885, 6886, 6887, 6888, 6889, // BitTorrent
+    31337, 12345, 27374, 1337, // Known backdoor ports
+    3389, // RDP (suspicious if unexpected)
+];
+
+#[tauri::command]
+pub async fn netops_traffic_anomalies() -> Result<TrafficAnomalyResult, String> {
+    let start = Instant::now();
+
+    let output = tokio::process::Command::new("lsof")
+        .args(["-i", "-n", "-P"])
+        .output()
+        .await
+        .map_err(|e| format!("lsof: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut all_connections: Vec<(String, u32, String, String, String)> = Vec::new();
+    let mut suspicious = Vec::new();
+    let mut foreign_ip_counts: HashMap<String, u32> = HashMap::new();
+
+    for (i, line) in stdout.lines().enumerate() {
+        if i == 0 { continue; } // skip header
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 9 { continue; }
+
+        let process = parts[0].to_string();
+        let pid = parts[1].parse::<u32>().unwrap_or(0);
+        let protocol = parts[7].to_string(); // TCP/UDP
+        let name_field = parts[8];
+
+        // Parse "local->foreign" or just "local (LISTEN)"
+        let (local, foreign, state) = if let Some(arrow_pos) = name_field.find("->") {
+            let local = &name_field[..arrow_pos];
+            let rest = &name_field[arrow_pos + 2..];
+            // State might be in next field
+            let state = if parts.len() > 9 {
+                parts[9].trim_matches(|c| c == '(' || c == ')').to_string()
+            } else {
+                String::new()
+            };
+            (local.to_string(), rest.to_string(), state)
+        } else {
+            let state = if parts.len() > 9 {
+                parts[9].trim_matches(|c| c == '(' || c == ')').to_string()
+            } else {
+                String::new()
+            };
+            (name_field.to_string(), String::new(), state)
+        };
+
+        // Track foreign IPs
+        if !foreign.is_empty() && foreign != "*:*" {
+            let fip = foreign.rsplitn(2, ':').last().unwrap_or("").to_string();
+            if !fip.is_empty() && fip != "*" && fip != "127.0.0.1" && fip != "::1" {
+                *foreign_ip_counts.entry(fip).or_insert(0) += 1;
+            }
+        }
+
+        all_connections.push((process.clone(), pid.clone(), protocol.clone(), local.clone(), foreign.clone()));
+
+        // Check for suspicious ports
+        let port = foreign.rsplitn(2, ':').next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(0);
+
+        if SUSPICIOUS_PORTS.contains(&port) {
+            suspicious.push(SuspiciousConnection {
+                process: process.clone(),
+                pid,
+                protocol: protocol.clone(),
+                local_addr: local.clone(),
+                foreign_addr: foreign.clone(),
+                port,
+                reason: format!("Connection to suspicious port {}", port),
+                threat_level: if port == 4444 || port == 31337 { "critical" } else { "high" }.into(),
+            });
+        }
+
+        // Check for unusual LISTEN ports
+        if state == "LISTEN" {
+            let listen_port = local.rsplitn(2, ':').next()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(0);
+            if listen_port > 10000 && !matches!(listen_port, 49152..=65535) {
+                // Not ephemeral range but high port
+                suspicious.push(SuspiciousConnection {
+                    process: process.clone(),
+                    pid,
+                    protocol: protocol.clone(),
+                    local_addr: local.clone(),
+                    foreign_addr: String::new(),
+                    port: listen_port,
+                    reason: format!("Unusual LISTEN on port {}", listen_port),
+                    threat_level: "medium".into(),
+                });
+            }
+        }
+    }
+
+    // Check for IPs with many connections (potential C2 or data exfil)
+    for (ip, count) in &foreign_ip_counts {
+        if *count > 5 {
+            suspicious.push(SuspiciousConnection {
+                process: String::new(),
+                pid: 0,
+                protocol: String::new(),
+                local_addr: String::new(),
+                foreign_addr: ip.clone(),
+                port: 0,
+                reason: format!("{} connections to same IP (possible C2/exfil)", count),
+                threat_level: if *count > 10 { "high" } else { "medium" }.into(),
+            });
+        }
+    }
+
+    let total = all_connections.len() as u32;
+    let susp_count = suspicious.len() as u32;
+
+    Ok(TrafficAnomalyResult {
+        connections: suspicious,
+        total_connections: total,
+        suspicious_count: susp_count,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 15: Rogue Access Point Detection
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApStatus {
+    pub ssid: String,
+    pub bssid: String,
+    pub rssi: i32,
+    pub channel: u32,
+    pub security: String,
+    pub status: String,  // "trusted" | "unknown" | "evil_twin"
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RogueApResult {
+    pub known_count: u32,
+    pub unknown_count: u32,
+    pub spoofed_count: u32,
+    pub networks: Vec<ApStatus>,
+    pub baseline_exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WifiBaseline {
+    saved_at: String,
+    networks: Vec<WifiBaselineEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WifiBaselineEntry {
+    ssid: String,
+    bssid: String,
+    security: String,
+}
+
+fn wifi_baseline_path() -> std::path::PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("flux-terminal")
+        .join("wifi_baseline.json")
+}
+
+fn scan_wifi_networks() -> Result<Vec<WifiNetwork>, String> {
+    // Synchronous helper that calls the swift script
+    // We'll call this from async context with spawn_blocking or just inline the command
+    Ok(Vec::new()) // placeholder, actual scanning done in the async commands
+}
+
+async fn run_wifi_scan_swift() -> Result<Vec<WifiNetwork>, String> {
+    let swift_code = include_str!("wifi_scan.swift");
+    let output = tokio::process::Command::new("swift")
+        .arg("-e")
+        .arg(swift_code)
+        .output()
+        .await
+        .map_err(|e| format!("swift wifi scan: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("WiFi scan failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut networks = Vec::new();
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.trim().split('|').collect();
+        if parts.len() < 5 { continue; }
+        networks.push(WifiNetwork {
+            ssid: parts[0].to_string(),
+            bssid: parts[1].to_string(),
+            rssi: parts[2].parse().unwrap_or(0),
+            channel: parts[3].parse().unwrap_or(0),
+            security: parts[4].to_string(),
+        });
+    }
+    Ok(networks)
+}
+
+#[tauri::command]
+pub async fn netops_rogue_ap_scan() -> Result<RogueApResult, String> {
+    let current = run_wifi_scan_swift().await?;
+    let path = wifi_baseline_path();
+    let baseline_exists = path.exists();
+
+    if !baseline_exists {
+        // No baseline — all are "unknown", suggest saving baseline
+        let networks: Vec<ApStatus> = current.iter().map(|n| ApStatus {
+            ssid: n.ssid.clone(),
+            bssid: n.bssid.clone(),
+            rssi: n.rssi,
+            channel: n.channel,
+            security: n.security.clone(),
+            status: "unknown".into(),
+            reason: "No baseline saved — save baseline first".into(),
+        }).collect();
+        let count = networks.len() as u32;
+        return Ok(RogueApResult {
+            known_count: 0,
+            unknown_count: count,
+            spoofed_count: 0,
+            networks,
+            baseline_exists: false,
+        });
+    }
+
+    // Load baseline
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("read baseline: {}", e))?;
+    let baseline: WifiBaseline = serde_json::from_str(&content).map_err(|e| format!("parse baseline: {}", e))?;
+
+    let mut known = 0u32;
+    let mut unknown = 0u32;
+    let mut spoofed = 0u32;
+    let mut networks = Vec::new();
+
+    for net in &current {
+        // Check if BSSID is in baseline
+        let baseline_match = baseline.networks.iter().find(|b| b.bssid == net.bssid);
+        let ssid_match = baseline.networks.iter().find(|b| b.ssid == net.ssid);
+
+        let (status, reason) = if let Some(_bm) = baseline_match {
+            known += 1;
+            ("trusted".into(), "Known BSSID in baseline".into())
+        } else if let Some(sm) = ssid_match {
+            // Same SSID but different BSSID — potential evil twin
+            spoofed += 1;
+            ("evil_twin".into(), format!(
+                "SSID '{}' has different BSSID (baseline: {}, current: {})",
+                net.ssid, sm.bssid, net.bssid
+            ))
+        } else {
+            unknown += 1;
+            ("unknown".into(), "SSID/BSSID not in baseline".into())
+        };
+
+        networks.push(ApStatus {
+            ssid: net.ssid.clone(),
+            bssid: net.bssid.clone(),
+            rssi: net.rssi,
+            channel: net.channel,
+            security: net.security.clone(),
+            status,
+            reason,
+        });
+    }
+
+    // Sort: evil_twin first, then unknown, then trusted
+    networks.sort_by(|a, b| {
+        let order = |s: &str| match s { "evil_twin" => 0, "unknown" => 1, _ => 2 };
+        order(&a.status).cmp(&order(&b.status))
+    });
+
+    Ok(RogueApResult { known_count: known, unknown_count: unknown, spoofed_count: spoofed, networks, baseline_exists: true })
+}
+
+#[tauri::command]
+pub async fn netops_rogue_ap_save_baseline() -> Result<String, String> {
+    let current = run_wifi_scan_swift().await?;
+    let baseline = WifiBaseline {
+        saved_at: chrono_now(),
+        networks: current.iter().map(|n| WifiBaselineEntry {
+            ssid: n.ssid.clone(),
+            bssid: n.bssid.clone(),
+            security: n.security.clone(),
+        }).collect(),
+    };
+
+    let path = wifi_baseline_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(&baseline).map_err(|e| format!("serialize: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("write: {}", e))?;
+
+    Ok(format!("Baseline saved with {} networks", baseline.networks.len()))
+}
+
+fn chrono_now() -> String {
+    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = d.as_secs();
+    // Simple ISO-ish timestamp
+    let hours = (secs % 86400) / 3600;
+    let mins = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02} UTC", hours, mins, s)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 16: Log Aggregation
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub subsystem: String,
+    pub process: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemLogsResult {
+    pub filter: String,
+    pub entries: Vec<LogEntry>,
+    pub total_count: u32,
+    pub query_time_ms: u64,
+}
+
+#[tauri::command]
+pub async fn netops_system_logs(filter: String) -> Result<SystemLogsResult, String> {
+    let start = Instant::now();
+
+    let predicate = match filter.as_str() {
+        "security" => r#"subsystem == "com.apple.securityd" OR subsystem == "com.apple.Security""#,
+        "network" => r#"subsystem == "com.apple.networkd" OR subsystem == "com.apple.wifi""#,
+        "firewall" => r#"subsystem == "com.apple.alf""#,
+        "auth" => r#"subsystem == "com.apple.Authorization" OR subsystem == "com.apple.loginwindow""#,
+        _ => r#"subsystem == "com.apple.securityd" OR subsystem == "com.apple.Security" OR subsystem == "com.apple.networkd" OR subsystem == "com.apple.wifi" OR subsystem == "com.apple.alf" OR subsystem == "com.apple.Authorization""#,
+    };
+
+    let output = tokio::process::Command::new("log")
+        .args(["show", "--predicate", predicate, "--last", "1h", "--style", "compact"])
+        .output()
+        .await
+        .map_err(|e| format!("log: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("Timestamp") || trimmed.starts_with("---") || trimmed.starts_with("Filtering") {
+            continue;
+        }
+
+        if trimmed.len() < 31 { continue; }
+
+        let timestamp = trimmed[..31].trim().to_string();
+        let rest = &trimmed[31..];
+
+        // Try to parse: level process[pid] subsystem message
+        let parts: Vec<&str> = rest.splitn(4, char::is_whitespace).filter(|s| !s.is_empty()).collect();
+
+        let (level, process, message) = if parts.len() >= 3 {
+            let lvl = parts[0].to_string();
+            let proc_name = parts[1].to_string();
+            let msg = if parts.len() > 2 { parts[2..].join(" ") } else { String::new() };
+            (lvl, proc_name, msg)
+        } else {
+            ("Info".into(), String::new(), rest.trim().to_string())
+        };
+
+        // Determine subsystem from message context
+        let sub = if message.contains("securityd") || message.contains("Security") {
+            "Security"
+        } else if message.contains("networkd") || message.contains("wifi") {
+            "Network"
+        } else if message.contains("alf") || message.contains("firewall") {
+            "Firewall"
+        } else if message.contains("Authorization") || message.contains("loginwindow") {
+            "Auth"
+        } else {
+            "System"
+        };
+
+        let truncated_msg = if message.len() > 300 {
+            format!("{}...", &message[..300])
+        } else {
+            message
+        };
+
+        entries.push(LogEntry {
+            timestamp,
+            level,
+            subsystem: sub.into(),
+            process,
+            message: truncated_msg,
+        });
+
+        if entries.len() >= 200 { break; }
+    }
+
+    entries.reverse(); // Most recent first
+    let total = entries.len() as u32;
+
+    Ok(SystemLogsResult {
+        filter,
+        entries,
+        total_count: total,
+        query_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 17: Threat Intelligence Feed
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreatSource {
+    pub name: String,
+    pub listed: bool,
+    pub category: String,
+    pub details: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreatCheckResult {
+    pub indicator: String,
+    pub threat_score: u32,
+    pub is_threat: bool,
+    pub sources: Vec<ThreatSource>,
+    pub open_ports: Vec<u16>,
+    pub vulns: Vec<String>,
+    pub hostnames: Vec<String>,
+    pub query_time_ms: u64,
+}
+
+fn threat_cache() -> &'static Mutex<HashMap<String, CacheEntry<ThreatCheckResult>>> {
+    static C: OnceLock<Mutex<HashMap<String, CacheEntry<ThreatCheckResult>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[tauri::command]
+pub async fn netops_threat_check(indicator: String) -> Result<ThreatCheckResult, String> {
+    if indicator.is_empty() {
+        return Err("IP address is required".into());
+    }
+
+    // Check cache
+    {
+        let cache = lock_cache(threat_cache())?;
+        if let Some(entry) = cache.get(&indicator) {
+            if entry.is_fresh(Duration::from_secs(3600)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let start = Instant::now();
+    let mut sources = Vec::new();
+    let mut open_ports: Vec<u16> = Vec::new();
+    let mut vulns: Vec<String> = Vec::new();
+    let mut hostnames: Vec<String> = Vec::new();
+    let mut score: u32 = 0;
+
+    // 1. Shodan InternetDB (free, no key)
+    let shodan_url = format!("https://internetdb.shodan.io/{}", indicator);
+    if let Ok(client) = http_client(10) {
+      if let Ok(resp) = client.get(&shodan_url).send().await {
+        if resp.status().is_success() {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if let Some(ports) = json.get("ports").and_then(|v: &serde_json::Value| v.as_array()) {
+                    open_ports = ports.iter().filter_map(|p: &serde_json::Value| p.as_u64().map(|v| v as u16)).collect();
+                }
+                if let Some(v) = json.get("vulns").and_then(|v: &serde_json::Value| v.as_array()) {
+                    vulns = v.iter().filter_map(|s: &serde_json::Value| s.as_str().map(String::from)).collect();
+                }
+                if let Some(h) = json.get("hostnames").and_then(|v: &serde_json::Value| v.as_array()) {
+                    hostnames = h.iter().filter_map(|s: &serde_json::Value| s.as_str().map(String::from)).collect();
+                }
+                let has_vulns = !vulns.is_empty();
+                sources.push(ThreatSource {
+                    name: "Shodan InternetDB".into(),
+                    listed: has_vulns,
+                    category: if has_vulns { "Vulnerable" } else { "Clean" }.into(),
+                    details: format!("{} ports, {} vulns", open_ports.len(), vulns.len()),
+                });
+                if has_vulns { score += 30; }
+                if open_ports.len() > 10 { score += 10; }
+            }
+        }
+      }
+    }
+
+    // 2. Spamhaus DNSBL check
+    let reversed: String = indicator.split('.').rev().collect::<Vec<&str>>().join(".");
+    let dnsbl_host = format!("{}.zen.spamhaus.org", reversed);
+    let dig_output = tokio::process::Command::new("dig")
+        .args(["+short", &dnsbl_host])
+        .output()
+        .await;
+
+    if let Ok(out) = dig_output {
+        let result = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let listed = !result.is_empty() && result.starts_with("127.");
+        sources.push(ThreatSource {
+            name: "Spamhaus ZEN".into(),
+            listed,
+            category: if listed { "Spam/Malware" } else { "Clean" }.into(),
+            details: if listed { format!("Listed: {}", result) } else { "Not listed".into() },
+        });
+        if listed { score += 30; }
+    }
+
+    // 3. abuse.ch DNSBL
+    let abuse_host = format!("{}.combined.abuse.ch", reversed);
+    let abuse_output = tokio::process::Command::new("dig")
+        .args(["+short", &abuse_host])
+        .output()
+        .await;
+
+    if let Ok(out) = abuse_output {
+        let result = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let listed = !result.is_empty() && result.starts_with("127.");
+        sources.push(ThreatSource {
+            name: "abuse.ch".into(),
+            listed,
+            category: if listed { "Malware/Botnet" } else { "Clean" }.into(),
+            details: if listed { format!("Listed: {}", result) } else { "Not listed".into() },
+        });
+        if listed { score += 30; }
+    }
+
+    // Add vuln-based scoring
+    score += (vulns.len() as u32).min(10) * 2;
+    score = score.min(100);
+
+    let result = ThreatCheckResult {
+        indicator: indicator.clone(),
+        threat_score: score,
+        is_threat: score >= 30,
+        sources,
+        open_ports,
+        vulns,
+        hostnames,
+        query_time_ms: start.elapsed().as_millis() as u64,
+    };
+
+    // Cache
+    {
+        let mut cache = lock_cache(threat_cache())?;
+        cache.insert(indicator, CacheEntry::new(result.clone()));
+    }
+
+    Ok(result)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 18: Security Score
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityCheck {
+    pub name: String,
+    pub category: String,
+    pub status: String,  // "pass" | "fail" | "warn" | "info"
+    pub detail: String,
+    pub weight: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityScoreResult {
+    pub overall_score: u32,
+    pub grade: String,
+    pub checks: Vec<SecurityCheck>,
+    pub passed: u32,
+    pub failed: u32,
+    pub warned: u32,
+    pub total: u32,
+}
+
+async fn run_check(cmd: &str, args: &[&str]) -> String {
+    tokio::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn netops_security_score() -> Result<SecurityScoreResult, String> {
+    let mut checks = Vec::new();
+
+    // 1. Firewall
+    let fw = run_check("/usr/libexec/ApplicationFirewall/socketfilterfw", &["--getglobalstate"]).await;
+    let fw_on = fw.contains("enabled");
+    checks.push(SecurityCheck {
+        name: "Firewall".into(),
+        category: "network".into(),
+        status: if fw_on { "pass" } else { "fail" }.into(),
+        detail: if fw_on { "Application Firewall is enabled" } else { "Application Firewall is DISABLED" }.into(),
+        weight: 15,
+    });
+
+    // 2. FileVault
+    let fv = run_check("fdesetup", &["status"]).await;
+    let fv_on = fv.contains("On");
+    checks.push(SecurityCheck {
+        name: "FileVault".into(),
+        category: "encryption".into(),
+        status: if fv_on { "pass" } else { "fail" }.into(),
+        detail: if fv_on { "Disk encryption is enabled" } else { "Disk encryption is DISABLED" }.into(),
+        weight: 20,
+    });
+
+    // 3. SIP
+    let sip = run_check("csrutil", &["status"]).await;
+    let sip_on = sip.contains("enabled");
+    checks.push(SecurityCheck {
+        name: "System Integrity Protection".into(),
+        category: "system".into(),
+        status: if sip_on { "pass" } else { "fail" }.into(),
+        detail: if sip_on { "SIP is enabled" } else { "SIP is DISABLED — system vulnerable" }.into(),
+        weight: 20,
+    });
+
+    // 4. Gatekeeper
+    let gk = run_check("spctl", &["--status"]).await;
+    let gk_on = gk.contains("enabled") || gk.contains("assessments enabled");
+    checks.push(SecurityCheck {
+        name: "Gatekeeper".into(),
+        category: "system".into(),
+        status: if gk_on { "pass" } else { "fail" }.into(),
+        detail: if gk_on { "App verification is enabled" } else { "Gatekeeper is DISABLED" }.into(),
+        weight: 15,
+    });
+
+    // 5. Auto-updates
+    let upd = run_check("defaults", &["read", "/Library/Preferences/com.apple.SoftwareUpdate", "AutomaticCheckEnabled"]).await;
+    let upd_on = upd.trim() == "1";
+    checks.push(SecurityCheck {
+        name: "Auto-Update Check".into(),
+        category: "system".into(),
+        status: if upd_on { "pass" } else { "warn" }.into(),
+        detail: if upd_on { "Automatic update checking is enabled" } else { "Automatic update checking may be disabled" }.into(),
+        weight: 10,
+    });
+
+    // 6. Screen lock
+    let lock = run_check("defaults", &["read", "com.apple.screensaver", "askForPassword"]).await;
+    let lock_on = lock.trim() == "1";
+    checks.push(SecurityCheck {
+        name: "Screen Lock".into(),
+        category: "access".into(),
+        status: if lock_on { "pass" } else { "warn" }.into(),
+        detail: if lock_on { "Password required on screen lock" } else { "Screen lock password may not be required" }.into(),
+        weight: 10,
+    });
+
+    // 7. Remote Login (SSH)
+    let ssh = run_check("systemsetup", &["-getremotelogin"]).await;
+    let ssh_off = ssh.contains("Off") || ssh.contains("not supported");
+    checks.push(SecurityCheck {
+        name: "Remote Login (SSH)".into(),
+        category: "access".into(),
+        status: if ssh_off { "pass" } else { "warn" }.into(),
+        detail: if ssh_off { "Remote Login is disabled" } else { "Remote Login (SSH) is enabled" }.into(),
+        weight: 10,
+    });
+
+    // Calculate score
+    let mut total_weight = 0u32;
+    let mut weighted_score = 0u32;
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+    let mut warned = 0u32;
+
+    for check in &checks {
+        total_weight += check.weight;
+        match check.status.as_str() {
+            "pass" => { weighted_score += check.weight * 100; passed += 1; }
+            "warn" => { weighted_score += check.weight * 50; warned += 1; }
+            "fail" => { failed += 1; }
+            _ => {}
+        }
+    }
+
+    let overall = if total_weight > 0 { weighted_score / total_weight } else { 0 };
+    let grade = match overall {
+        90..=100 => "A",
+        80..=89 => "B",
+        70..=79 => "C",
+        60..=69 => "D",
+        _ => "F",
+    }.into();
+
+    let total = checks.len() as u32;
+    Ok(SecurityScoreResult {
+        overall_score: overall,
+        grade,
+        checks,
+        passed,
+        failed,
+        warned,
+        total,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 19: Incident Response Tracking
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncidentNote {
+    pub timestamp: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityIncident {
+    pub id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub severity: String,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub notes: Vec<IncidentNote>,
+}
+
+fn incidents_path() -> std::path::PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("flux-terminal")
+        .join("incidents.json")
+}
+
+fn incidents_store() -> &'static Mutex<Vec<SecurityIncident>> {
+    static S: OnceLock<Mutex<Vec<SecurityIncident>>> = OnceLock::new();
+    S.get_or_init(|| {
+        let path = incidents_path();
+        let data = if path.exists() {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|c| serde_json::from_str(&c).ok())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Mutex::new(data)
+    })
+}
+
+fn save_incidents(incidents: &[SecurityIncident]) -> Result<(), String> {
+    let path = incidents_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(incidents).map_err(|e| format!("serialize: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("write: {}", e))?;
+    Ok(())
+}
+
+fn now_iso() -> String {
+    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = d.as_secs();
+    // days since epoch
+    let days = secs / 86400;
+    let remaining = secs % 86400;
+    let h = remaining / 3600;
+    let m = (remaining % 3600) / 60;
+    let s = remaining % 60;
+    // Approximate date (good enough for display)
+    let y = 1970 + (days / 365); // approximate
+    let d_in_y = days % 365;
+    let month = d_in_y / 30 + 1;
+    let day = d_in_y % 30 + 1;
+    format!("{}-{:02}-{:02} {:02}:{:02}:{:02}", y, month.min(12), day.min(31), h, m, s)
+}
+
+#[tauri::command]
+pub async fn netops_incident_list() -> Result<Vec<SecurityIncident>, String> {
+    let store = lock_cache(incidents_store())?;
+    Ok(store.clone())
+}
+
+#[tauri::command]
+pub async fn netops_incident_create(severity: String, title: String, description: String) -> Result<Vec<SecurityIncident>, String> {
+    let now = now_iso();
+    let incident = SecurityIncident {
+        id: uuid::Uuid::new_v4().to_string()[..8].to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+        severity,
+        title,
+        description,
+        status: "open".into(),
+        notes: Vec::new(),
+    };
+
+    let mut store = lock_cache(incidents_store())?;
+    store.insert(0, incident);
+    save_incidents(&store)?;
+    Ok(store.clone())
+}
+
+#[tauri::command]
+pub async fn netops_incident_update(id: String, status: String, note: String) -> Result<Vec<SecurityIncident>, String> {
+    let mut store = lock_cache(incidents_store())?;
+    let incident = store.iter_mut().find(|i| i.id == id)
+        .ok_or_else(|| format!("Incident {} not found", id))?;
+
+    incident.status = status;
+    incident.updated_at = now_iso();
+    if !note.is_empty() {
+        incident.notes.push(IncidentNote {
+            timestamp: now_iso(),
+            content: note,
+        });
+    }
+
+    save_incidents(&store)?;
+    Ok(store.clone())
 }

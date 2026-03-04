@@ -11,6 +11,7 @@ const TOOLS: { id: NetopsTool; icon: string; label: string; desc: string }[] = [
   { id: "dns",         icon: "🌐", label: "DNS LOOKUP",   desc: "DNS record query" },
   { id: "whois",       icon: "📋", label: "WHOIS",        desc: "Domain registration" },
   { id: "wifi",        icon: "📶", label: "WiFi SCAN",    desc: "Nearby networks" },
+  { id: "wifiauth",   icon: "🔐", label: "WiFi AUTH",    desc: "Auth failure monitor" },
   { id: "httpheaders", icon: "🔒", label: "HTTP HEADERS", desc: "Response headers" },
   { id: "ssl",         icon: "🛡️", label: "SSL/TLS",      desc: "Certificate inspect" },
   { id: "geoip",       icon: "📍", label: "GEO IP",       desc: "IP geolocation" },
@@ -18,6 +19,12 @@ const TOOLS: { id: NetopsTool; icon: string; label: string; desc: string }[] = [
   { id: "subnet",      icon: "🧮", label: "SUBNET CALC",  desc: "CIDR calculator" },
   { id: "reversedns",  icon: "↩️", label: "REVERSE DNS",  desc: "IP to hostname" },
   { id: "traceroute",  icon: "🗺️", label: "TRACEROUTE",   desc: "Route tracing" },
+  { id: "traffic",     icon: "🚨", label: "TRAFFIC",      desc: "Anomaly detection" },
+  { id: "rogueap",     icon: "👻", label: "ROGUE AP",     desc: "AP baseline check" },
+  { id: "logs",        icon: "📜", label: "LOG VIEWER",   desc: "System log aggregation" },
+  { id: "threatfeed",  icon: "☠️", label: "THREAT INTEL",  desc: "IP threat check" },
+  { id: "secscore",    icon: "🏆", label: "SEC SCORE",    desc: "Security assessment" },
+  { id: "incidents",   icon: "🔔", label: "INCIDENTS",    desc: "Incident tracking" },
 ];
 
 export default function ToolPanel(props: Props) {
