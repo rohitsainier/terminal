@@ -435,6 +435,7 @@ export interface HandshakeResult {
   channel: number;
   noise: number;
   scan_time_ms: number;
+  log_text: string;
 }
 
 // ═══ Discriminated union for results ═══

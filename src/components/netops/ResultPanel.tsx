@@ -1,4 +1,5 @@
-import { Show, For, Switch, Match } from "solid-js";
+import { Show, For, Switch, Match, createSignal } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import type { NetopsStore, NetopsTool } from "./types";
 
 interface Props {
@@ -1112,9 +1113,32 @@ export default function ResultPanel(props: Props) {
               <Match when={res().kind === "handshake"}>
                 {(() => {
                   const d = res() as { kind: "handshake"; data: import("./types").HandshakeResult };
+                  const [saving, setSaving] = createSignal(false);
+                  const [savedPath, setSavedPath] = createSignal("");
+                  async function downloadLog() {
+                    setSaving(true);
+                    try {
+                      const path = await invoke<string>("netops_save_handshake_log", {
+                        logText: d.data.log_text,
+                        ssid: d.data.ssid,
+                      });
+                      setSavedPath(path);
+                    } catch (e) {
+                      setSavedPath("Error: " + e);
+                    }
+                    setSaving(false);
+                  }
                   return (
                     <div class="nops-output">
-                      <div class="nops-result-header">WPA HANDSHAKE — {d.data.ssid} ({d.data.scan_time_ms}ms)</div>
+                      <div class="nops-result-header" style="display: flex; justify-content: space-between; align-items: center">
+                        <span>WPA HANDSHAKE — {d.data.ssid} ({d.data.scan_time_ms}ms)</span>
+                        <button class="nops-download-log-btn" onClick={downloadLog} disabled={saving()}>
+                          {saving() ? "SAVING..." : "DOWNLOAD LOG"}
+                        </button>
+                      </div>
+                      <Show when={savedPath() !== ""}>
+                        <div class="nops-log-saved">{savedPath().startsWith("Error") ? savedPath() : `Saved: ${savedPath()}`}</div>
+                      </Show>
                       <div class={`nops-waf-status ${d.data.handshake_complete ? "nops-waf-none" : "nops-waf-detected"}`}>
                         {d.data.handshake_complete ? "4-WAY HANDSHAKE COMPLETE" : "HANDSHAKE PENDING"}
                       </div>

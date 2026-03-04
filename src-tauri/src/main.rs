@@ -160,6 +160,7 @@ fn main() {
             netops::netops_hash_id,
             netops::netops_cipher_scan,
             netops::netops_handshake_analyze,
+            netops::netops_save_handshake_log,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

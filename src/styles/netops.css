@@ -1109,6 +1109,38 @@
   font-family: monospace;
 }
 
+/* ─── Download Log Button ─── */
+.nops-download-log-btn {
+  background: transparent;
+  border: 1px solid var(--nops-accent);
+  color: var(--nops-accent);
+  font-size: 9px;
+  font-family: inherit;
+  padding: 3px 12px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+.nops-download-log-btn:hover {
+  background: var(--nops-accent);
+  color: #000;
+}
+.nops-download-log-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.nops-log-saved {
+  font-size: 9px;
+  color: var(--nops-accent);
+  padding: 4px 8px;
+  background: rgba(0, 212, 255, 0.05);
+  border-left: 2px solid var(--nops-accent);
+  margin: 4px 0;
+  word-break: break-all;
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 900px) {
   .nops-main {

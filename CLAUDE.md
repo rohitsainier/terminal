@@ -46,10 +46,10 @@ src/                        # Frontend (SolidJS + TypeScript)
   themes/                   # Theme JSON files + ThemeEngine
     netops/                 # NETOPS Dashboard (network operations + security tools)
       index.ts              # Barrel export
-      types.ts              # Interfaces, NetopsTool union (27 tools), NetopsStore type
+      types.ts              # Interfaces, NetopsTool union (28 tools), NetopsStore type
       useNetopsData.ts      # Signals, runTool(), history management
       TopBar.tsx            # Top bar (logo, LIVE badge, UTC clock)
-      ToolPanel.tsx         # Left panel (27 tool rows with icons)
+      ToolPanel.tsx         # Left panel (28 tool rows with icons)
       ResultPanel.tsx       # Center panel (input bar + result renderers per tool)
       InfoPanel.tsx         # Right panel (tool help + scan history)
       NetopsDashboard.tsx   # Orchestrator (keyboard, layout)
@@ -65,7 +65,7 @@ src-tauri/                  # Rust backend
   src/ssh.rs                 # SSH connections
   src/mcp.rs                 # Model Context Protocol
   src/monitor.rs             # Monitor API commands (ISS, weather, quakes, crypto, flights, net throughput, speedtest)
-  src/netops.rs              # NETOPS commands (27 tools: ping, port scan, DNS, whois, WiFi scan, WiFi auth, HTTP headers, SSL, geoIP, ARP, subnet calc, reverse DNS, traceroute, traffic anomalies, rogue AP, log viewer, threat intel, security score, incidents, service scan, subdomain enum, dir brute, web fingerprint, WAF detect, vuln scan, hash ID, cipher scan)
+  src/netops.rs              # NETOPS commands (28 tools: ping, port scan, DNS, whois, WiFi scan, WiFi auth, HTTP headers, SSL, geoIP, ARP, subnet calc, reverse DNS, traceroute, traffic anomalies, rogue AP, log viewer, threat intel, security score, incidents, service scan, subdomain enum, dir brute, web fingerprint, WAF detect, vuln scan, hash ID, cipher scan, WPA handshake analyzer)
   src/wifi_scan.swift        # CoreWLAN WiFi scanner (embedded via include_str!)
 ```
 
@@ -99,8 +99,8 @@ src-tauri/                  # Rust backend
 - **Themes:** 6 JSON theme files loaded by ThemeEngine
 - **Config:** Stored in OS config directory via `dirs` crate, hot-reloadable
 - **Monitor Dashboard:** 7 modes (INTEL, CYBER, SAT, FLIGHTS, CAMS, WEATHER, QUAKE) with 3D globe (globe.gl). State managed via `useMonitorData` hook returning a `MonitorStore` object passed as props. Globe logic is imperative (not JSX) in `globeManager.ts`. Rust backend uses `OnceLock<Mutex<Option<CacheEntry<T>>>>` caching pattern with TTL. Free APIs: Open-Meteo (weather), USGS (earthquakes), CoinGecko (crypto), OpenSky (flights), CelesTrak (satellites). Features: Cloudflare CDN speedtest, real network throughput monitoring (toggle-based with `sysinfo` crate), fullscreen panel mode (double-click to expand any panel)
-- **NETOPS Dashboard:** 27 network/security tools (⌘⇧N). Same architecture as Monitor: `useNetopsData` hook → `NetopsStore` object → props. Rust backend uses `tokio::process::Command` for system tools (dig, whois, arp, traceroute, openssl) and `reqwest` for HTTP-based tools (ping, headers, geoip, threat intel, dir brute, web fingerprint, WAF detect, vuln scan). WiFi scanning via CoreWLAN Swift script (`wifi_scan.swift` embedded with `include_str!`). Caching for whois, geoip, & threat intel (1hr TTL). Port scan and service scan use concurrent `tokio::net::TcpStream::connect()` with banner grabbing. Subdomain enum uses batched `dig` lookups. Persistent JSON storage in `dirs::config_dir()/flux-terminal/` for WiFi baselines and incidents. Embedded wordlists for subdomain brute (~90 entries) and directory brute (~80 paths). Tools split into 3 categories:
+- **NETOPS Dashboard:** 28 network/security tools (⌘⇧N). Same architecture as Monitor: `useNetopsData` hook → `NetopsStore` object → props. Rust backend uses `tokio::process::Command` for system tools (dig, whois, arp, traceroute, openssl, system_profiler) and `reqwest` for HTTP-based tools (ping, headers, geoip, threat intel, dir brute, web fingerprint, WAF detect, vuln scan). WiFi scanning via CoreWLAN Swift script (`wifi_scan.swift` embedded with `include_str!`). Caching for whois, geoip, & threat intel (1hr TTL). Port scan and service scan use concurrent `tokio::net::TcpStream::connect()` with banner grabbing. Subdomain enum uses batched `dig` lookups. Persistent JSON storage in `dirs::config_dir()/flux-terminal/` for WiFi baselines and incidents. Embedded wordlists for subdomain brute (~90 entries) and directory brute (~80 paths). WPA handshake analyzer uses `system_profiler SPAirPortDataType` for connection details + CoreWLAN scan for SSID matching (macOS Sequoia compatible). Log reports saved to `~/Downloads/` with detailed protocol explanations. Tools split into 3 categories:
   - **Network:** ping, port scan, DNS lookup, WHOIS, WiFi scan, WiFi auth monitor, HTTP headers, SSL inspect, IP geolocation, ARP table, subnet calc, reverse DNS, traceroute
-  - **Security:** traffic anomaly detection, rogue AP detection, system log viewer, threat intelligence, security score, incident tracking
+  - **Security:** traffic anomaly detection, rogue AP detection, system log viewer, threat intelligence, security score, incident tracking, WPA handshake analyzer (with downloadable log reports)
   - **Offensive/Kali-style:** service scan (banner grab), subdomain enum, directory brute force, web fingerprint, WAF detection, web vuln scan (nikto-lite), hash identifier, cipher scan (TLS enum)
 - **Dashboard Color Scheme:** Both Monitor and NETOPS dashboards share a unified cyan `#00d4ff` color scheme. Monitor uses `--fcmd-*` CSS variables, NETOPS uses `--nops-*` CSS variables
