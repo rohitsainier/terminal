@@ -1010,6 +1010,100 @@
 
 .fcmd-marker-cam:hover .fcmd-cam-lbl { max-width: 160px; }
 
+/* ─── Weather Markers ──────────────────────────────────────────── */
+
+.fcmd-weather-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+.fcmd-weather-marker:hover {
+  transform: scale(1.2);
+}
+
+.fcmd-weather-icon {
+  font-size: 16px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.fcmd-weather-temp {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--fcmd-font-mono);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.fcmd-weather-city {
+  font-size: 7px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+/* ─── Weather List (left panel) ────────────────────────────────── */
+
+.fcmd-weather-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px !important;
+}
+
+.fcmd-weather-row-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 22px;
+  text-align: center;
+}
+
+.fcmd-weather-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fcmd-weather-row-city {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--fcmd-text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fcmd-weather-row-desc {
+  font-size: 8px;
+  color: var(--fcmd-text);
+  opacity: 0.5;
+}
+
+.fcmd-weather-row-data {
+  flex-shrink: 0;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.fcmd-weather-row-temp {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--fcmd-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.fcmd-weather-row-meta {
+  font-size: 7px;
+  opacity: 0.4;
+  color: var(--fcmd-text);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    ALTITUDE LEGEND
    ═══════════════════════════════════════════════════════════════════ */

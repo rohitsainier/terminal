@@ -72,6 +72,20 @@ pub struct Activity {
     pub intensity: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeatherPoint {
+    pub city: String,
+    pub country: String,
+    pub lat: f64,
+    pub lng: f64,
+    pub temperature: f64,
+    pub humidity: u16,
+    pub wind_speed: f64,
+    pub weather_code: u16,
+    pub description: String,
+    pub icon: String,
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  CACHE INFRASTRUCTURE
 // ═══════════════════════════════════════════════════════════════════
@@ -119,6 +133,11 @@ fn news_cache() -> &'static Mutex<Option<CacheEntry<Vec<NewsItem>>>> {
 
 fn ip_cache() -> &'static Mutex<Option<CacheEntry<String>>> {
     static C: OnceLock<Mutex<Option<CacheEntry<String>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn weather_cache() -> &'static Mutex<Option<CacheEntry<Vec<WeatherPoint>>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<Vec<WeatherPoint>>>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(None))
 }
 
@@ -847,4 +866,154 @@ pub async fn monitor_public_ip() -> Result<String, String> {
 #[tauri::command]
 pub async fn monitor_activity() -> Result<Vec<Activity>, String> {
     Ok(generate_activity())
+}
+
+// ─── 8. Weather ─────────────────────────────────────────────────
+
+const WEATHER_CITIES: &[(&str, &str, f64, f64)] = &[
+    ("New York", "US", 40.71, -74.01),
+    ("London", "UK", 51.51, -0.13),
+    ("Tokyo", "JP", 35.68, 139.69),
+    ("Sydney", "AU", -33.87, 151.21),
+    ("Dubai", "AE", 25.20, 55.27),
+    ("Mumbai", "IN", 19.08, 72.88),
+    ("São Paulo", "BR", -23.55, -46.63),
+    ("Paris", "FR", 48.86, 2.35),
+    ("Berlin", "DE", 52.52, 13.41),
+    ("Moscow", "RU", 55.76, 37.62),
+    ("Beijing", "CN", 39.90, 116.40),
+    ("Singapore", "SG", 1.35, 103.82),
+    ("Cairo", "EG", 30.04, 31.24),
+    ("Lagos", "NG", 6.52, 3.38),
+    ("Toronto", "CA", 43.65, -79.38),
+    ("Mexico City", "MX", 19.43, -99.13),
+    ("Seoul", "KR", 37.57, 126.98),
+    ("Istanbul", "TR", 41.01, 28.98),
+    ("Bangkok", "TH", 13.76, 100.50),
+    ("Nairobi", "KE", -1.29, 36.82),
+    ("Buenos Aires", "AR", -34.60, -58.38),
+    ("Johannesburg", "ZA", -26.20, 28.04),
+    ("Jakarta", "ID", -6.21, 106.85),
+    ("Hong Kong", "HK", 22.32, 114.17),
+    ("Los Angeles", "US", 34.05, -118.24),
+];
+
+fn wmo_to_description(code: u16) -> (&'static str, &'static str) {
+    match code {
+        0 => ("Clear sky", "☀️"),
+        1 => ("Mainly clear", "🌤️"),
+        2 => ("Partly cloudy", "⛅"),
+        3 => ("Overcast", "☁️"),
+        45 | 48 => ("Fog", "🌫️"),
+        51 | 53 | 55 => ("Drizzle", "🌦️"),
+        56 | 57 => ("Freezing drizzle", "🌧️"),
+        61 | 63 | 65 => ("Rain", "🌧️"),
+        66 | 67 => ("Freezing rain", "🌧️"),
+        71 | 73 | 75 => ("Snowfall", "❄️"),
+        77 => ("Snow grains", "❄️"),
+        80 | 81 | 82 => ("Rain showers", "🌦️"),
+        85 | 86 => ("Snow showers", "🌨️"),
+        95 => ("Thunderstorm", "⛈️"),
+        96 | 99 => ("Thunderstorm with hail", "⛈️"),
+        _ => ("Unknown", "🌡️"),
+    }
+}
+
+#[tauri::command]
+pub async fn monitor_weather() -> Result<Vec<WeatherPoint>, String> {
+    // Check cache (TTL: 10 minutes)
+    {
+        let cache = lock_cache(weather_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(600)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(15)?;
+
+    // Build comma-separated lat/lng lists for batch request
+    let lats: Vec<String> = WEATHER_CITIES.iter().map(|c| c.2.to_string()).collect();
+    let lngs: Vec<String> = WEATHER_CITIES.iter().map(|c| c.3.to_string()).collect();
+
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
+        lats.join(","),
+        lngs.join(",")
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("weather fetch: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("weather API returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("weather parse: {}", e))?;
+
+    // Open-Meteo returns an array of objects when multiple coordinates are queried
+    let results: Vec<WeatherPoint> = if let Some(arr) = body.as_array() {
+        arr.iter()
+            .enumerate()
+            .filter_map(|(i, item)| {
+                let current = item.get("current")?;
+                let temp = current.get("temperature_2m")?.as_f64()?;
+                let humidity = current.get("relative_humidity_2m")?.as_u64()? as u16;
+                let wind = current.get("wind_speed_10m")?.as_f64()?;
+                let code = current.get("weather_code")?.as_u64()? as u16;
+                let (desc, icon) = wmo_to_description(code);
+                let city = WEATHER_CITIES.get(i)?;
+                Some(WeatherPoint {
+                    city: city.0.to_string(),
+                    country: city.1.to_string(),
+                    lat: city.2,
+                    lng: city.3,
+                    temperature: temp,
+                    humidity,
+                    wind_speed: wind,
+                    weather_code: code,
+                    description: desc.to_string(),
+                    icon: icon.to_string(),
+                })
+            })
+            .collect()
+    } else if body.get("current").is_some() {
+        // Single location fallback (shouldn't happen with 25 cities, but handle gracefully)
+        let current = body.get("current").unwrap();
+        let temp = current.get("temperature_2m").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let humidity = current.get("relative_humidity_2m").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+        let wind = current.get("wind_speed_10m").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let code = current.get("weather_code").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+        let (desc, icon) = wmo_to_description(code);
+        let city = WEATHER_CITIES[0];
+        vec![WeatherPoint {
+            city: city.0.to_string(),
+            country: city.1.to_string(),
+            lat: city.2,
+            lng: city.3,
+            temperature: temp,
+            humidity,
+            wind_speed: wind,
+            weather_code: code,
+            description: desc.to_string(),
+            icon: icon.to_string(),
+        }]
+    } else {
+        return Err("unexpected weather API response format".to_string());
+    };
+
+    // Store in cache
+    {
+        let mut cache = lock_cache(weather_cache())?;
+        *cache = Some(CacheEntry::new(results.clone()));
+    }
+
+    Ok(results)
 }

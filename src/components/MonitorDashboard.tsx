@@ -47,6 +47,18 @@ interface Activity {
   event_type: string;
   intensity: number;
 }
+interface WeatherPoint {
+  city: string;
+  country: string;
+  lat: number;
+  lng: number;
+  temperature: number;
+  humidity: number;
+  wind_speed: number;
+  weather_code: number;
+  description: string;
+  icon: string;
+}
 interface SysStats {
   os: string;
   hostname: string;
@@ -105,7 +117,7 @@ interface Props {
   onClose: () => void;
 }
 
-type DashboardMode = "INTEL" | "CYBER" | "SAT" | "FLIGHTS" | "CAMS";
+type DashboardMode = "INTEL" | "CYBER" | "SAT" | "FLIGHTS" | "CAMS" | "WEATHER";
 
 /* ═══════════════════════════════════════════════════════════════
    CONSTANTS
@@ -120,6 +132,7 @@ const MODE_CONFIG: Record<
   SAT: { icon: "🛰", label: "SAT", key: "3", color: "#4488ff" },
   FLIGHTS: { icon: "🛫", label: "FLIGHTS", key: "4", color: "#00d4ff" },
   CAMS: { icon: "📷", label: "CAMS", key: "5", color: "#ffaa44" },
+  WEATHER: { icon: "🌤️", label: "WEATHER", key: "6", color: "#f59e0b" },
 };
 
 const SAT_GROUPS = [
@@ -348,6 +361,7 @@ export default function MonitorDashboard(props: Props) {
   const [news, setNews] = createSignal<NewsItem[]>([]);
   const [stats, setStats] = createSignal<SysStats | null>(null);
   const [activity, setActivity] = createSignal<Activity[]>([]);
+  const [weather, setWeather] = createSignal<WeatherPoint[]>([]);
   const [publicIp, setPublicIp] = createSignal("...");
   const [threats, setThreats] = createSignal<ThreatEvent[]>([]);
 
@@ -411,6 +425,7 @@ export default function MonitorDashboard(props: Props) {
       if (e.key === "3") { switchMode("SAT"); setShowModeMenu(false); }
       if (e.key === "4") { switchMode("FLIGHTS"); setShowModeMenu(false); }
       if (e.key === "5") { switchMode("CAMS"); setShowModeMenu(false); }
+      if (e.key === "6") { switchMode("WEATHER"); setShowModeMenu(false); }
       if (e.key === "m" || e.key === "M") setStreamMuted((m) => !m);
     };
     window.addEventListener("keydown", onKey);
@@ -439,6 +454,7 @@ export default function MonitorDashboard(props: Props) {
     try { setStats(await invoke("monitor_system_stats")); } catch {}
     try { setActivity(await invoke("monitor_activity")); } catch {}
     try { setPublicIp(await invoke("monitor_public_ip")); } catch {}
+    try { setWeather(await invoke("monitor_weather")); } catch {}
   }
 
   async function fetchISS() {
@@ -629,6 +645,20 @@ export default function MonitorDashboard(props: Props) {
           <span class="fcmd-cam-lbl">${d.city || d.label || ""}</span>
         `;
         el.title = `${d.city || ""} — ${d.label || ""}\n${d.country || ""}`;
+        break;
+      }
+
+      /* ─── WEATHER MARKER ─── */
+      case "weather": {
+        el.className = "fcmd-marker fcmd-weather-marker";
+        const temp = d.temperature ?? 0;
+        const tempColor = temp < 0 ? "#60a5fa" : temp < 15 ? "#94a3b8" : temp < 30 ? "#fbbf24" : "#ef4444";
+        el.innerHTML = `
+          <span class="fcmd-weather-icon">${d.icon || "🌡️"}</span>
+          <span class="fcmd-weather-temp" style="color: ${tempColor}">${Math.round(temp)}°</span>
+          <span class="fcmd-weather-city">${d.city || ""}</span>
+        `;
+        el.title = `${d.city}, ${d.country}\n${d.description}\nTemp: ${temp}°C | Humidity: ${d.humidity}% | Wind: ${d.wind_speed} km/h`;
         break;
       }
 
@@ -905,6 +935,9 @@ export default function MonitorDashboard(props: Props) {
       case "CAMS":
         configureGlobeCAMS();
         break;
+      case "WEATHER":
+        configureGlobeWEATHER();
+        break;
     }
   }
 
@@ -1025,6 +1058,39 @@ export default function MonitorDashboard(props: Props) {
       .htmlElementsData(camMarkers);
     globeInstance.controls().autoRotateSpeed = 0.1;
   }
+
+  function configureGlobeWEATHER() {
+    if (!globeInstance) return;
+    const w = weather();
+    const markers = w.map((wp) => ({
+      ...wp,
+      _type: "weather" as const,
+      _htmlAlt: 0.01,
+    }));
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-blue-marble.jpg")
+      .atmosphereColor("#f59e0b")
+      .pointsData([])
+      .arcsData([])
+      .labelsData([])
+      .pathsData([])
+      .ringsData([])
+      .htmlElementsData(markers);
+    globeInstance.controls().autoRotateSpeed = 0.15;
+  }
+
+  // Reactive: update weather markers when data arrives in WEATHER mode
+  createEffect(() => {
+    if (mode() !== "WEATHER" || !globeInstance) return;
+    const w = weather();
+    if (!w.length) return;
+    const markers = w.map((wp) => ({
+      ...wp,
+      _type: "weather" as const,
+      _htmlAlt: 0.01,
+    }));
+    globeInstance.htmlElementsData(markers);
+  });
 
   /* ═══════════════════════════════════════════════════════════════
      REACTIVE GLOBE UPDATES
@@ -1546,6 +1612,42 @@ export default function MonitorDashboard(props: Props) {
                 </div>
               </section>
             </Show>
+
+            {/* WEATHER mode: city weather list */}
+            <Show when={mode() === "WEATHER"}>
+              <section class="fcmd-panel fcmd-panel-grow">
+                <h3 class="fcmd-panel-hdr">🌤️ WEATHER ({weather().length})</h3>
+                <Show when={weather().length > 0} fallback={<div class="fcmd-dim" style={{ padding: "12px" }}>Fetching weather...</div>}>
+                  <div class="fcmd-scroll-list">
+                    <For each={weather()}>
+                      {(wp) => {
+                        const tempColor = () => wp.temperature < 0 ? "#60a5fa" : wp.temperature < 15 ? "#94a3b8" : wp.temperature < 30 ? "#fbbf24" : "#ef4444";
+                        return (
+                          <div
+                            class="fcmd-list-row fcmd-weather-row"
+                            onClick={() => {
+                              if (globeInstance) {
+                                globeInstance.pointOfView({ lat: wp.lat, lng: wp.lng, altitude: 1.2 }, 600);
+                              }
+                            }}
+                          >
+                            <span class="fcmd-weather-row-icon">{wp.icon}</span>
+                            <div class="fcmd-weather-row-info">
+                              <span class="fcmd-weather-row-city">{wp.city}, {wp.country}</span>
+                              <span class="fcmd-weather-row-desc">{wp.description}</span>
+                            </div>
+                            <div class="fcmd-weather-row-data">
+                              <span class="fcmd-weather-row-temp" style={{ color: tempColor() }}>{Math.round(wp.temperature)}°C</span>
+                              <span class="fcmd-weather-row-meta">💧{wp.humidity}% 💨{wp.wind_speed.toFixed(0)}</span>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
+              </section>
+            </Show>
           </aside>
 
           {/* ─── CENTER: 3D GLOBE ──────────────────────────────── */}
@@ -1574,6 +1676,9 @@ export default function MonitorDashboard(props: Props) {
               </Show>
               <Show when={mode() === "CYBER"}>
                 <span class="fcmd-dim" style={{ color: "#ff4444" }}>THREAT MONITORING ACTIVE</span>
+              </Show>
+              <Show when={mode() === "WEATHER"}>
+                <span class="fcmd-dim">{weather().length} CITIES</span>
               </Show>
             </div>
 
@@ -1616,7 +1721,8 @@ export default function MonitorDashboard(props: Props) {
               <span class="fcmd-dim">SRC: {
                 mode() === "SAT" ? "CELESTRAK" :
                 mode() === "FLIGHTS" ? "OPENSKY-NET" :
-                mode() === "CAMS" ? "CURATED" : "FLUX-NET"
+                mode() === "CAMS" ? "CURATED" :
+                mode() === "WEATHER" ? "OPEN-METEO" : "FLUX-NET"
               }</span>
             </div>
 
@@ -1708,6 +1814,31 @@ export default function MonitorDashboard(props: Props) {
           {/* ─── RIGHT PANEL ───────────────────────────────────── */}
           <aside class="fcmd-panel-col fcmd-right">
 
+
+            {/* WEATHER mode: right panel summary */}
+            <Show when={mode() === "WEATHER"}>
+              <section class="fcmd-panel fcmd-stream-panel">
+                <h3 class="fcmd-panel-hdr">🌡️ WEATHER SUMMARY</h3>
+                <div class="fcmd-sat-info-box">
+                  <Show when={weather().length > 0} fallback={<p class="fcmd-dim">Loading weather data...</p>}>
+                    <div class="fcmd-kv"><span>CITIES</span><span>{weather().length}</span></div>
+                    <div class="fcmd-kv"><span>HOTTEST</span><span style={{ color: "#ef4444" }}>
+                      {(() => { const w = weather().reduce((a, b) => a.temperature > b.temperature ? a : b); return `${w.city} ${Math.round(w.temperature)}°C`; })()}
+                    </span></div>
+                    <div class="fcmd-kv"><span>COLDEST</span><span style={{ color: "#60a5fa" }}>
+                      {(() => { const w = weather().reduce((a, b) => a.temperature < b.temperature ? a : b); return `${w.city} ${Math.round(w.temperature)}°C`; })()}
+                    </span></div>
+                    <div class="fcmd-kv"><span>AVG TEMP</span><span>
+                      {Math.round(weather().reduce((s, w) => s + w.temperature, 0) / weather().length)}°C
+                    </span></div>
+                    <div class="fcmd-kv"><span>AVG HUMIDITY</span><span>
+                      {Math.round(weather().reduce((s, w) => s + w.humidity, 0) / weather().length)}%
+                    </span></div>
+                    <p class="fcmd-dim" style={{ "margin-top": "8px" }}>Data from Open-Meteo API. Updated every 10 minutes.</p>
+                  </Show>
+                </div>
+              </section>
+            </Show>
 
             {/* SAT mode: right panel info */}
             <Show when={mode() === "SAT"}>
