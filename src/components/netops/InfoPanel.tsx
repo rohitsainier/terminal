@@ -34,6 +34,7 @@ const TOOL_HELP: Record<NetopsTool, { title: string; desc: string; usage: string
   hashid:      { title: "Hash Identifier", desc: "Identifies hash type from input string. Supports MD5, SHA-1/256/512, bcrypt, NTLM, MySQL, Unix crypt, Argon2, JWT, and Base64.", usage: "Enter a hash string", example: "5d41402abc4b2a76b9719d911017c592" },
   cipherscan:  { title: "Cipher Scan", desc: "Enumerates supported TLS protocol versions and cipher suites. Grades configuration A-F based on protocol and cipher strength.", usage: "Enter a domain name", example: "github.com" },
   handshake:   { title: "WPA Handshake", desc: "Analyzes the current WiFi connection's WPA/WPA2/WPA3 4-way handshake status, security parameters, and recent EAPOL events from system logs.", usage: "No input needed — click Run to analyze current connection.", example: "" },
+  pcapview:    { title: "PCAP Viewer", desc: "Opens and parses .pcap and .cap packet capture files. Displays packets in a table with protocol detection, EAPOL handshake highlighting, and hex preview.", usage: "Click Browse to select a .pcap or .cap file, then Run to analyze.", example: "" },
 };
 
 export default function InfoPanel(props: Props) {

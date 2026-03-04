@@ -34,7 +34,7 @@ export function useNetopsData(): NetopsStore {
     if (loading()) return;
 
     // Tools that don't need a target
-    const noTargetTools: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents", "handshake"];
+    const noTargetTools: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents", "handshake", "pcapview"];
     if (!noTargetTools.includes(tool) && !tgt) {
       setError("Target is required");
       return;
@@ -232,6 +232,16 @@ export function useNetopsData(): NetopsStore {
           }
           const data = await invoke<import("./types").HandshakeResult>("netops_handshake_analyze", params);
           setResult({ kind: "handshake", data });
+          break;
+        }
+        case "pcapview": {
+          if (!tgt) {
+            setError("Select a .pcap or .cap file first");
+            setLoading(false);
+            return;
+          }
+          const data = await invoke<import("./types").PcapAnalysis>("netops_pcap_analyze", { path: tgt });
+          setResult({ kind: "pcapview", data });
           break;
         }
       }

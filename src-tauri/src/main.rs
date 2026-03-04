@@ -51,6 +51,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             // PTY
             commands::create_session,
@@ -161,6 +162,7 @@ fn main() {
             netops::netops_cipher_scan,
             netops::netops_handshake_analyze,
             netops::netops_save_handshake_log,
+            netops::netops_pcap_analyze,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

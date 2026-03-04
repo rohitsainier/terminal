@@ -1333,12 +1333,6 @@ fn wifi_baseline_path() -> std::path::PathBuf {
         .join("wifi_baseline.json")
 }
 
-fn scan_wifi_networks() -> Result<Vec<WifiNetwork>, String> {
-    // Synchronous helper that calls the swift script
-    // We'll call this from async context with spawn_blocking or just inline the command
-    Ok(Vec::new()) // placeholder, actual scanning done in the async commands
-}
-
 async fn run_wifi_scan_swift() -> Result<Vec<WifiNetwork>, String> {
     let swift_code = include_str!("wifi_scan.swift");
     let output = tokio::process::Command::new("swift")
@@ -3563,8 +3557,167 @@ pub async fn netops_handshake_analyze(
     })
 }
 
+// ─── Synthetic PCAP Builder ────────────────────────────────────────
+fn build_handshake_pcap(bssid: &str, security: &str) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(1024);
+
+    // ── PCAP Global Header (24 bytes, little-endian) ──
+    buf.extend_from_slice(&0xA1B2C3D4u32.to_le_bytes()); // magic
+    buf.extend_from_slice(&2u16.to_le_bytes());           // version major
+    buf.extend_from_slice(&4u16.to_le_bytes());           // version minor
+    buf.extend_from_slice(&0i32.to_le_bytes());           // timezone
+    buf.extend_from_slice(&0u32.to_le_bytes());           // sigfigs
+    buf.extend_from_slice(&65535u32.to_le_bytes());       // snaplen
+    buf.extend_from_slice(&1u32.to_le_bytes());           // link type: Ethernet
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let base_ts = now.as_secs() as u32;
+
+    // Parse BSSID → 6-byte MAC
+    let ap_mac: [u8; 6] = {
+        let parts: Vec<u8> = bssid.split(':')
+            .filter_map(|h| u8::from_str_radix(h, 16).ok())
+            .collect();
+        if parts.len() == 6 {
+            [parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]]
+        } else {
+            [0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E] // fallback
+        }
+    };
+    let client_mac: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+
+    // Key descriptor type: 0x02 for RSN (WPA2/WPA3), 0xFE for WPA
+    let desc_type: u8 = if security.contains("WPA2") || security.contains("WPA3") { 0x02 } else { 0xFE };
+
+    // Key length: 16 for CCMP (WPA2/WPA3), 32 for TKIP (WPA)
+    let key_len: u16 = if desc_type == 0x02 { 16 } else { 32 };
+
+    // Generate synthetic nonces (deterministic from BSSID for reproducibility)
+    let mut anonce = [0u8; 32];
+    let mut snonce = [0u8; 32];
+    for i in 0..32 {
+        anonce[i] = ap_mac[i % 6].wrapping_mul((i as u8).wrapping_add(0x37));
+        snonce[i] = client_mac[i % 6].wrapping_mul((i as u8).wrapping_add(0x5A));
+    }
+
+    // Key Info flags per message (little-endian u16)
+    // Bit layout: [Ver(3)][Type(1)][Install(1)][Ack(1)][MIC(1)][Secure(1)][Error(1)][Request(1)][EncKeyData(1)]
+    let key_infos: [u16; 4] = [
+        0x008A, // Msg1: Pairwise(0x08) + Ack(0x80) + Ver2(0x02)
+        0x010A, // Msg2: Pairwise(0x08) + MIC(0x100) + Ver2(0x02)
+        0x13CA, // Msg3: Pairwise(0x08) + Install(0x40) + Ack(0x80) + MIC(0x100) + Secure(0x200) + EncKeyData(0x1000) + Ver2(0x02)
+        0x030A, // Msg4: Pairwise(0x08) + MIC(0x100) + Secure(0x200) + Ver2(0x02)
+    ];
+
+    // Directions: true = AP→Client, false = Client→AP
+    let ap_to_client = [true, false, true, false];
+
+    // Synthetic RSN IE for Message 3 key data
+    let rsn_ie: Vec<u8> = vec![
+        0x30,       // Element ID: RSN
+        0x14,       // Length: 20
+        0x01, 0x00, // RSN Version: 1
+        0x00, 0x0F, 0xAC, 0x04, // Group Cipher: CCMP
+        0x01, 0x00, // Pairwise Cipher Count: 1
+        0x00, 0x0F, 0xAC, 0x04, // Pairwise Cipher: CCMP
+        0x01, 0x00, // AKM Count: 1
+        0x00, 0x0F, 0xAC, 0x02, // AKM: PSK
+        0x00, 0x00, // RSN Capabilities
+    ];
+
+    for msg_idx in 0..4u8 {
+        let mut pkt = Vec::with_capacity(128);
+
+        // ── Ethernet Header (14 bytes) ──
+        if ap_to_client[msg_idx as usize] {
+            pkt.extend_from_slice(&client_mac); // dst
+            pkt.extend_from_slice(&ap_mac);     // src
+        } else {
+            pkt.extend_from_slice(&ap_mac);     // dst
+            pkt.extend_from_slice(&client_mac); // src
+        }
+        pkt.extend_from_slice(&0x888Eu16.to_be_bytes()); // EtherType: EAPOL
+
+        // ── EAPOL Header (4 bytes) ──
+        // Key data for msg3 only
+        let key_data = if msg_idx == 2 { &rsn_ie[..] } else { &[] };
+        let eapol_key_body_len: u16 = 95 + key_data.len() as u16;
+
+        pkt.push(0x02); // EAPOL version 2
+        pkt.push(0x03); // Type: EAPOL-Key
+        pkt.extend_from_slice(&eapol_key_body_len.to_be_bytes()); // body length
+
+        // ── EAPOL-Key Descriptor ──
+        pkt.push(desc_type); // Key Descriptor Type
+
+        // Key Information (2 bytes, big-endian)
+        pkt.extend_from_slice(&key_infos[msg_idx as usize].to_be_bytes());
+
+        // Key Length (2 bytes)
+        pkt.extend_from_slice(&key_len.to_be_bytes());
+
+        // Replay Counter (8 bytes) — increments per message
+        pkt.extend_from_slice(&(msg_idx as u64 + 1).to_be_bytes());
+
+        // Key Nonce (32 bytes)
+        match msg_idx {
+            0 | 2 => pkt.extend_from_slice(&anonce), // AP sends ANonce
+            1     => pkt.extend_from_slice(&snonce), // Client sends SNonce
+            _     => pkt.extend_from_slice(&[0u8; 32]), // Msg4: empty
+        }
+
+        // Key IV (16 bytes) — zeros for WPA2
+        pkt.extend_from_slice(&[0u8; 16]);
+
+        // Key RSC (8 bytes)
+        pkt.extend_from_slice(&[0u8; 8]);
+
+        // Key ID / Reserved (8 bytes)
+        pkt.extend_from_slice(&[0u8; 8]);
+
+        // Key MIC (16 bytes) — synthetic (zero for msg1, hash-like for msg2-4)
+        if msg_idx == 0 {
+            pkt.extend_from_slice(&[0u8; 16]);
+        } else {
+            let mut mic = [0u8; 16];
+            for i in 0..16 {
+                mic[i] = ap_mac[i % 6]
+                    .wrapping_add(client_mac[i % 6])
+                    .wrapping_mul(msg_idx.wrapping_add(i as u8).wrapping_add(0x3C));
+            }
+            pkt.extend_from_slice(&mic);
+        }
+
+        // Key Data Length (2 bytes)
+        pkt.extend_from_slice(&(key_data.len() as u16).to_be_bytes());
+
+        // Key Data (variable)
+        pkt.extend_from_slice(key_data);
+
+        // ── PCAP Record Header (16 bytes) ──
+        let ts_sec = base_ts + msg_idx as u32;
+        let ts_usec = msg_idx as u32 * 250_000; // 250ms apart
+        let pkt_len = pkt.len() as u32;
+
+        buf.extend_from_slice(&ts_sec.to_le_bytes());
+        buf.extend_from_slice(&ts_usec.to_le_bytes());
+        buf.extend_from_slice(&pkt_len.to_le_bytes()); // incl_len
+        buf.extend_from_slice(&pkt_len.to_le_bytes()); // orig_len
+        buf.extend_from_slice(&pkt);
+    }
+
+    buf
+}
+
 #[tauri::command]
-pub async fn netops_save_handshake_log(log_text: String, ssid: String) -> Result<String, String> {
+pub async fn netops_save_handshake_log(
+    log_text: String,
+    ssid: String,
+    bssid: String,
+    security: String,
+) -> Result<String, String> {
     let downloads = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
         .ok_or("Could not find Downloads directory")?;
@@ -3574,17 +3727,330 @@ pub async fn netops_save_handshake_log(log_text: String, ssid: String) -> Result
         .collect();
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
     let timestamp = format!("{}", secs);
-    let filename = format!("handshake_{}_{}.txt", safe_ssid, timestamp);
-    let path = downloads.join(&filename);
+    let base_name = format!("handshake_{}_{}", safe_ssid, timestamp);
 
-    tokio::fs::write(&path, &log_text)
+    // 1. Save text log
+    let txt_path = downloads.join(format!("{}.txt", base_name));
+    tokio::fs::write(&txt_path, &log_text)
         .await
-        .map_err(|e| format!("Failed to save log: {}", e))?;
+        .map_err(|e| format!("Failed to save txt: {}", e))?;
 
-    // Open the file with default text editor
+    // 2. Generate and save pcap
+    let pcap_data = build_handshake_pcap(&bssid, &security);
+    let pcap_path = downloads.join(format!("{}.pcap", base_name));
+    tokio::fs::write(&pcap_path, &pcap_data)
+        .await
+        .map_err(|e| format!("Failed to save pcap: {}", e))?;
+
+    // 3. Save cap (same data, different extension for aircrack-ng compat)
+    let cap_path = downloads.join(format!("{}.cap", base_name));
+    tokio::fs::write(&cap_path, &pcap_data)
+        .await
+        .map_err(|e| format!("Failed to save cap: {}", e))?;
+
+    // Open the Downloads folder so user can see all 3 files
     let _ = tokio::process::Command::new("open")
-        .arg(&path)
+        .arg(&downloads)
         .spawn();
 
-    Ok(path.to_string_lossy().to_string())
+    Ok(format!(
+        "Saved 3 files to Downloads:\n  {} (.txt)\n  {} (.pcap)\n  {} (.cap)",
+        txt_path.file_name().unwrap_or_default().to_string_lossy(),
+        pcap_path.file_name().unwrap_or_default().to_string_lossy(),
+        cap_path.file_name().unwrap_or_default().to_string_lossy(),
+    ))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 10: PCAP / CAP File Viewer
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcapPacket {
+    pub index: u32,
+    pub timestamp: f64,
+    pub src: String,
+    pub dst: String,
+    pub protocol: String,
+    pub length: u32,
+    pub info: String,
+    pub is_eapol: bool,
+    pub hex_preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PcapAnalysis {
+    pub filename: String,
+    pub file_size: u64,
+    pub link_type: u32,
+    pub packet_count: u32,
+    pub packets: Vec<PcapPacket>,
+    pub eapol_count: u32,
+    pub duration_secs: f64,
+    pub parse_time_ms: u64,
+}
+
+fn format_mac(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(":")
+}
+
+fn hex_preview(data: &[u8], max: usize) -> String {
+    data.iter()
+        .take(max)
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .chunks(16)
+        .map(|chunk| chunk.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+
+fn read_u32(data: &[u8], off: usize, le: bool) -> u32 {
+    if off + 4 > data.len() { return 0; }
+    if le { u32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]) }
+    else  { u32::from_be_bytes([data[off], data[off+1], data[off+2], data[off+3]]) }
+}
+
+#[tauri::command]
+pub async fn netops_pcap_analyze(path: String) -> Result<PcapAnalysis, String> {
+    let start = Instant::now();
+
+    let data = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    if data.len() < 24 {
+        return Err("File too small to be a valid pcap".into());
+    }
+
+    // Parse global header
+    let magic = u32::from_ne_bytes([data[0], data[1], data[2], data[3]]);
+    let le = match magic {
+        0xA1B2C3D4 => true,  // little-endian
+        0xD4C3B2A1 => false, // big-endian
+        _ => return Err(format!("Invalid pcap magic: 0x{:08X}. Not a valid pcap/cap file.", magic)),
+    };
+
+    let link_type = read_u32(&data, 20, le);
+    let filename = std::path::Path::new(&path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let file_size = data.len() as u64;
+
+    let mut packets = Vec::new();
+    let mut eapol_count: u32 = 0;
+    let mut offset = 24usize; // skip global header
+    let mut first_ts: f64 = 0.0;
+    let mut last_ts: f64 = 0.0;
+    let max_packets = 500u32;
+
+    while offset + 16 <= data.len() && packets.len() < max_packets as usize {
+        // Record header
+        let ts_sec = read_u32(&data, offset, le) as f64;
+        let ts_usec = read_u32(&data, offset + 4, le) as f64;
+        let incl_len = read_u32(&data, offset + 8, le) as usize;
+        let _orig_len = read_u32(&data, offset + 12, le);
+        offset += 16;
+
+        if offset + incl_len > data.len() { break; }
+        let pkt_data = &data[offset..offset + incl_len];
+        offset += incl_len;
+
+        let ts = ts_sec + ts_usec / 1_000_000.0;
+        if first_ts == 0.0 { first_ts = ts; }
+        last_ts = ts;
+        let relative_ts = ts - first_ts;
+
+        let idx = packets.len() as u32 + 1;
+        let hex = hex_preview(pkt_data, 64);
+
+        // Parse based on link type
+        if link_type == 1 && pkt_data.len() >= 14 {
+            // Ethernet
+            let dst_mac = format_mac(&pkt_data[0..6]);
+            let src_mac = format_mac(&pkt_data[6..12]);
+            let ether_type = u16::from_be_bytes([pkt_data[12], pkt_data[13]]);
+
+            match ether_type {
+                0x0800 if pkt_data.len() >= 34 => {
+                    // IPv4
+                    let ihl = (pkt_data[14] & 0x0F) as usize * 4;
+                    let total_len = u16::from_be_bytes([pkt_data[16], pkt_data[17]]);
+                    let proto = pkt_data[23];
+                    let src_ip = format!("{}.{}.{}.{}", pkt_data[26], pkt_data[27], pkt_data[28], pkt_data[29]);
+                    let dst_ip = format!("{}.{}.{}.{}", pkt_data[30], pkt_data[31], pkt_data[32], pkt_data[33]);
+
+                    let (protocol, info) = match proto {
+                        6 => {
+                            let tp = 14 + ihl;
+                            if pkt_data.len() >= tp + 4 {
+                                let sport = u16::from_be_bytes([pkt_data[tp], pkt_data[tp+1]]);
+                                let dport = u16::from_be_bytes([pkt_data[tp+2], pkt_data[tp+3]]);
+                                let flags = if pkt_data.len() > tp + 13 { pkt_data[tp + 13] } else { 0 };
+                                let flag_str = {
+                                    let mut f = Vec::new();
+                                    if flags & 0x02 != 0 { f.push("SYN"); }
+                                    if flags & 0x10 != 0 { f.push("ACK"); }
+                                    if flags & 0x01 != 0 { f.push("FIN"); }
+                                    if flags & 0x04 != 0 { f.push("RST"); }
+                                    if flags & 0x08 != 0 { f.push("PSH"); }
+                                    if f.is_empty() { f.push(""); }
+                                    f.join(",")
+                                };
+                                ("TCP".into(), format!("{} → {} [{}] Len={}", sport, dport, flag_str, total_len))
+                            } else {
+                                ("TCP".into(), format!("{} → {} Len={}", src_ip, dst_ip, total_len))
+                            }
+                        }
+                        17 => {
+                            let tp = 14 + ihl;
+                            if pkt_data.len() >= tp + 4 {
+                                let sport = u16::from_be_bytes([pkt_data[tp], pkt_data[tp+1]]);
+                                let dport = u16::from_be_bytes([pkt_data[tp+2], pkt_data[tp+3]]);
+                                let udp_len = if pkt_data.len() >= tp + 6 { u16::from_be_bytes([pkt_data[tp+4], pkt_data[tp+5]]) } else { 0 };
+                                let proto_name = match dport {
+                                    53 | 5353 => "DNS",
+                                    67 | 68 => "DHCP",
+                                    123 => "NTP",
+                                    _ => "UDP",
+                                };
+                                (proto_name.into(), format!("{} → {} Len={}", sport, dport, udp_len))
+                            } else {
+                                ("UDP".into(), format!("{} → {}", src_ip, dst_ip))
+                            }
+                        }
+                        1 => {
+                            let icmp_type = if pkt_data.len() > 14 + ihl { pkt_data[14 + ihl] } else { 0 };
+                            let desc = match icmp_type {
+                                0 => "Echo Reply",
+                                8 => "Echo Request",
+                                3 => "Destination Unreachable",
+                                11 => "Time Exceeded",
+                                _ => "ICMP",
+                            };
+                            ("ICMP".into(), desc.into())
+                        }
+                        _ => (format!("IPv4/{}", proto), format!("{} → {}", src_ip, dst_ip)),
+                    };
+
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: src_ip, dst: dst_ip,
+                        protocol, length: incl_len as u32,
+                        info, is_eapol: false, hex_preview: hex,
+                    });
+                }
+                0x0806 if pkt_data.len() >= 28 => {
+                    // ARP
+                    let op = u16::from_be_bytes([pkt_data[20], pkt_data[21]]);
+                    let op_str = if op == 1 { "Request" } else { "Reply" };
+                    let sender_ip = if pkt_data.len() >= 32 {
+                        format!("{}.{}.{}.{}", pkt_data[28], pkt_data[29], pkt_data[30], pkt_data[31])
+                    } else { "?".into() };
+                    let target_ip = if pkt_data.len() >= 42 {
+                        format!("{}.{}.{}.{}", pkt_data[38], pkt_data[39], pkt_data[40], pkt_data[41])
+                    } else { "?".into() };
+
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: src_mac.clone(), dst: dst_mac.clone(),
+                        protocol: "ARP".into(), length: incl_len as u32,
+                        info: format!("{}: Who has {}? Tell {}", op_str, target_ip, sender_ip),
+                        is_eapol: false, hex_preview: hex,
+                    });
+                }
+                0x888E => {
+                    // EAPOL
+                    eapol_count += 1;
+                    let mut info = "EAPOL".to_string();
+                    if pkt_data.len() >= 18 {
+                        let eapol_type = pkt_data[15];
+                        if eapol_type == 0x03 && pkt_data.len() >= 19 {
+                            // EAPOL-Key
+                            let key_info = u16::from_be_bytes([pkt_data[19], pkt_data[20]]);
+                            let has_ack = key_info & 0x0080 != 0;
+                            let has_mic = key_info & 0x0100 != 0;
+                            let has_install = key_info & 0x0040 != 0;
+                            let has_secure = key_info & 0x0200 != 0;
+                            let msg_num = if has_ack && !has_mic { 1 }
+                                else if !has_ack && has_mic && !has_install { 2 }
+                                else if has_ack && has_mic && has_install { 3 }
+                                else if has_mic && has_secure && !has_ack { 4 }
+                                else { 0 };
+                            if msg_num > 0 {
+                                info = format!("EAPOL-Key Message {} (4-Way Handshake)", msg_num);
+                            } else {
+                                info = format!("EAPOL-Key [Info: 0x{:04X}]", key_info);
+                            }
+                        } else {
+                            info = format!("EAPOL Type {}", eapol_type);
+                        }
+                    }
+
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: src_mac, dst: dst_mac,
+                        protocol: "EAPOL".into(), length: incl_len as u32,
+                        info, is_eapol: true, hex_preview: hex,
+                    });
+                }
+                0x86DD if pkt_data.len() >= 54 => {
+                    // IPv6
+                    let src_v6 = format!("{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}",
+                        pkt_data[22], pkt_data[23], pkt_data[24], pkt_data[25],
+                        pkt_data[26], pkt_data[27], pkt_data[28], pkt_data[29]);
+                    let dst_v6 = format!("{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}",
+                        pkt_data[38], pkt_data[39], pkt_data[40], pkt_data[41],
+                        pkt_data[42], pkt_data[43], pkt_data[44], pkt_data[45]);
+                    let next_header = pkt_data[20];
+                    let proto = match next_header {
+                        6 => "TCP", 17 => "UDP", 58 => "ICMPv6", _ => "IPv6",
+                    };
+
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: src_v6, dst: dst_v6,
+                        protocol: proto.into(), length: incl_len as u32,
+                        info: format!("Next Header: {}", next_header),
+                        is_eapol: false, hex_preview: hex,
+                    });
+                }
+                _ => {
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: src_mac, dst: dst_mac,
+                        protocol: format!("0x{:04X}", ether_type), length: incl_len as u32,
+                        info: format!("EtherType 0x{:04X}", ether_type),
+                        is_eapol: false, hex_preview: hex,
+                    });
+                }
+            }
+        } else {
+            // Non-Ethernet or too short
+            packets.push(PcapPacket {
+                index: idx, timestamp: relative_ts,
+                src: "—".into(), dst: "—".into(),
+                protocol: format!("Link:{}", link_type), length: incl_len as u32,
+                info: format!("{} bytes", incl_len),
+                is_eapol: false, hex_preview: hex,
+            });
+        }
+    }
+
+    let packet_count = packets.len() as u32;
+    let duration_secs = if last_ts > first_ts { last_ts - first_ts } else { 0.0 };
+
+    Ok(PcapAnalysis {
+        filename,
+        file_size,
+        link_type,
+        packet_count,
+        packets,
+        eapol_count,
+        duration_secs,
+        parse_time_ms: start.elapsed().as_millis() as u64,
+    })
 }

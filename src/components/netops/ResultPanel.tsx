@@ -1,5 +1,6 @@
 import { Show, For, Switch, Match, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import type { NetopsStore, NetopsTool } from "./types";
 
 interface Props {
@@ -35,6 +36,7 @@ const TOOL_PLACEHOLDERS: Record<NetopsTool, string> = {
   hashid: "5d41402abc4b2a76b9719d911017c592",
   cipherscan: "github.com",
   handshake: "",
+  pcapview: "",
 };
 
 const TOOL_LABELS: Record<NetopsTool, string> = {
@@ -66,12 +68,13 @@ const TOOL_LABELS: Record<NetopsTool, string> = {
   hashid: "Hash",
   cipherscan: "Domain",
   handshake: "",
+  pcapview: "",
 };
 
 const DNS_TYPES = ["A", "AAAA", "MX", "CNAME", "TXT", "NS", "SOA"];
 const LOG_FILTERS = ["all", "security", "network", "firewall", "auth"];
 const ROGUEAP_MODES = ["scan", "save"];
-const NO_TARGET_TOOLS: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents", "handshake"];
+const NO_TARGET_TOOLS: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents", "handshake", "pcapview"];
 
 export default function ResultPanel(props: Props) {
   const tool = () => props.store.activeTool();
@@ -164,6 +167,25 @@ export default function ResultPanel(props: Props) {
               {(m) => <option value={m}>{m === "save" ? "SAVE BASELINE" : "SCAN"}</option>}
             </For>
           </select>
+        </Show>
+
+        <Show when={tool() === "pcapview"}>
+          <button
+            class="nops-pcap-browse-btn"
+            type="button"
+            onClick={async () => {
+              const file = await dialogOpen({
+                multiple: false,
+                filters: [{ name: "Packet Capture", extensions: ["pcap", "cap"] }],
+              });
+              if (file) {
+                props.store.setTarget(file as string);
+                props.store.runTool();
+              }
+            }}
+          >
+            BROWSE FILE
+          </button>
         </Show>
 
         <button
@@ -1121,6 +1143,8 @@ export default function ResultPanel(props: Props) {
                       const path = await invoke<string>("netops_save_handshake_log", {
                         logText: d.data.log_text,
                         ssid: d.data.ssid,
+                        bssid: d.data.bssid || "",
+                        security: d.data.security_protocol || "",
                       });
                       setSavedPath(path);
                     } catch (e) {
@@ -1133,7 +1157,7 @@ export default function ResultPanel(props: Props) {
                       <div class="nops-result-header" style="display: flex; justify-content: space-between; align-items: center">
                         <span>WPA HANDSHAKE — {d.data.ssid} ({d.data.scan_time_ms}ms)</span>
                         <button class="nops-download-log-btn" onClick={downloadLog} disabled={saving()}>
-                          {saving() ? "SAVING..." : "DOWNLOAD LOG"}
+                          {saving() ? "SAVING..." : "EXPORT (.txt / .pcap / .cap)"}
                         </button>
                       </div>
                       <Show when={savedPath() !== ""}>
@@ -1194,6 +1218,68 @@ export default function ResultPanel(props: Props) {
                       <Show when={d.data.events.length === 0}>
                         <div class="nops-no-data" style="margin-top: 8px">No EAPOL events in last 30 minutes</div>
                       </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "pcapview"}>
+                {(() => {
+                  const d = res() as { kind: "pcapview"; data: import("./types").PcapAnalysis };
+                  const [expandedPkt, setExpandedPkt] = createSignal<number | null>(null);
+                  const formatSize = (bytes: number) => {
+                    if (bytes < 1024) return `${bytes} B`;
+                    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+                    return `${(bytes / 1048576).toFixed(1)} MB`;
+                  };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">PCAP ANALYSIS — {d.data.filename} ({d.data.parse_time_ms}ms)</div>
+                      <div class="nops-pcap-file-info">
+                        <span>Size: {formatSize(d.data.file_size)}</span>
+                        <span>Packets: {d.data.packet_count}</span>
+                        <span>EAPOL: <span class={d.data.eapol_count > 0 ? "nops-status-open" : ""}>{d.data.eapol_count}</span></span>
+                        <span>Duration: {d.data.duration_secs.toFixed(3)}s</span>
+                        <span>Link: {d.data.link_type === 1 ? "Ethernet" : `Type ${d.data.link_type}`}</span>
+                      </div>
+
+                      <Show when={d.data.packets.length > 0} fallback={<div class="nops-no-data">No packets found in file</div>}>
+                        <table class="nops-table">
+                          <thead><tr><th>#</th><th>TIME</th><th>SOURCE</th><th>DESTINATION</th><th>PROTO</th><th>LEN</th><th>INFO</th></tr></thead>
+                          <tbody>
+                            <For each={d.data.packets}>
+                              {(pkt) => (
+                                <>
+                                  <tr
+                                    class={pkt.is_eapol ? "nops-pcap-eapol-row" : ""}
+                                    style="cursor: pointer"
+                                    onClick={() => setExpandedPkt(expandedPkt() === pkt.index ? null : pkt.index)}
+                                  >
+                                    <td>{pkt.index}</td>
+                                    <td>{pkt.timestamp.toFixed(6)}</td>
+                                    <td style="font-size: 0.7rem">{pkt.src}</td>
+                                    <td style="font-size: 0.7rem">{pkt.dst}</td>
+                                    <td class={pkt.is_eapol ? "nops-status-open" : pkt.protocol === "TCP" ? "nops-status-filtered" : ""}>
+                                      {pkt.protocol}
+                                    </td>
+                                    <td>{pkt.length}</td>
+                                    <td style="font-size: 0.7rem; max-width: 250px; overflow: hidden; text-overflow: ellipsis">{pkt.info}</td>
+                                  </tr>
+                                  <Show when={expandedPkt() === pkt.index}>
+                                    <tr>
+                                      <td colSpan={7}>
+                                        <pre class="nops-pcap-hex">{pkt.hex_preview}</pre>
+                                      </td>
+                                    </tr>
+                                  </Show>
+                                </>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      </Show>
+
+                      <div class="nops-result-summary">{d.data.packet_count} packets parsed{d.data.eapol_count > 0 ? `, ${d.data.eapol_count} EAPOL frames found` : ""}</div>
                     </div>
                   );
                 })()}

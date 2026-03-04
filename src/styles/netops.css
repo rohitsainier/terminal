@@ -17,6 +17,7 @@
   --nops-text:         rgba(200, 220, 240, 0.9);
   --nops-text-dim:     rgba(150, 170, 200, 0.6);
   --nops-text-white:   #e8f0ff;
+  --nops-accent:       #00d4ff;
   --nops-font:         'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
 }
 
@@ -1139,6 +1140,61 @@
   border-left: 2px solid var(--nops-accent);
   margin: 4px 0;
   word-break: break-all;
+}
+
+/* ─── PCAP Viewer ─── */
+.nops-pcap-browse-btn {
+  background: var(--nops-accent);
+  border: none;
+  color: #000;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 700;
+  padding: 8px 18px;
+  cursor: pointer;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+  height: 34px;
+  line-height: 1;
+}
+.nops-pcap-browse-btn:hover {
+  opacity: 0.85;
+}
+.nops-pcap-file-info {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: rgba(0, 212, 255, 0.04);
+  border: 1px solid rgba(0, 212, 255, 0.1);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  margin-bottom: 8px;
+}
+.nops-pcap-file-info span {
+  white-space: nowrap;
+}
+.nops-pcap-eapol-row {
+  background: rgba(0, 212, 255, 0.08) !important;
+}
+.nops-pcap-eapol-row td {
+  color: var(--nops-accent) !important;
+  font-weight: 600;
+}
+.nops-pcap-hex {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 9px;
+  color: var(--nops-text-dim);
+  background: rgba(0, 0, 0, 0.3);
+  padding: 6px 10px;
+  border-radius: 3px;
+  margin: 2px 0;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* ─── Responsive ─── */

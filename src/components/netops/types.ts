@@ -8,7 +8,8 @@ export type NetopsTool =
   | "subnet" | "reversedns" | "traceroute"
   | "traffic" | "rogueap" | "logs" | "threatfeed" | "secscore" | "incidents"
   | "servicescan" | "subenum" | "dirbust" | "webfinger" | "wafdetect" | "webvuln" | "hashid" | "cipherscan"
-  | "handshake";
+  | "handshake"
+  | "pcapview";
 
 // ═══ Result types (mirror Rust structs) ═══
 
@@ -438,6 +439,31 @@ export interface HandshakeResult {
   log_text: string;
 }
 
+// ═══ PCAP Viewer types ═══
+
+export interface PcapPacket {
+  index: number;
+  timestamp: number;
+  src: string;
+  dst: string;
+  protocol: string;
+  length: number;
+  info: string;
+  is_eapol: boolean;
+  hex_preview: string;
+}
+
+export interface PcapAnalysis {
+  filename: string;
+  file_size: number;
+  link_type: number;
+  packet_count: number;
+  packets: PcapPacket[];
+  eapol_count: number;
+  duration_secs: number;
+  parse_time_ms: number;
+}
+
 // ═══ Discriminated union for results ═══
 
 export type ToolResult =
@@ -468,7 +494,8 @@ export type ToolResult =
   | { kind: "webvuln"; data: WebVulnResult }
   | { kind: "hashid"; data: HashIdResult }
   | { kind: "cipherscan"; data: CipherScanResult }
-  | { kind: "handshake"; data: HandshakeResult };
+  | { kind: "handshake"; data: HandshakeResult }
+  | { kind: "pcapview"; data: PcapAnalysis };
 
 export interface HistoryEntry {
   tool: NetopsTool;

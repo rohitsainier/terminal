@@ -34,6 +34,7 @@ const TOOLS: { id: NetopsTool; icon: string; label: string; desc: string }[] = [
   { id: "hashid",      icon: "🔑", label: "HASH ID",      desc: "Hash identifier" },
   { id: "cipherscan",  icon: "🔐", label: "CIPHER SCAN",  desc: "TLS cipher enum" },
   { id: "handshake",   icon: "🤝", label: "HANDSHAKE",    desc: "WPA 4-way analysis" },
+  { id: "pcapview",    icon: "📦", label: "PCAP VIEW",    desc: "Open .pcap/.cap files" },
 ];
 
 export default function ToolPanel(props: Props) {
