@@ -120,6 +120,7 @@ export interface ThreatEvent {
 }
 
 export type DashboardMode = "INTEL" | "CYBER" | "SAT" | "FLIGHTS" | "CAMS" | "WEATHER" | "QUAKE";
+export type ExpandedPanel = "left" | "globe" | "right" | null;
 
 export interface MonitorStore {
   // Core
@@ -143,6 +144,8 @@ export interface MonitorStore {
   setShowStream: Setter<boolean>;
   showModeMenu: Accessor<boolean>;
   setShowModeMenu: Setter<boolean>;
+  expandedPanel: Accessor<ExpandedPanel>;
+  setExpandedPanel: Setter<ExpandedPanel>;
 
   // Data
   iss: Accessor<ISSPos | null>;

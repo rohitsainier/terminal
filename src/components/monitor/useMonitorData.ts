@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ISSPos, NewsItem, Activity, WeatherPoint, QuakeEvent, CryptoPrice,
   SysStats, SatTLE, SatPos, FlightInfo, WebcamInfo, ThreatEvent,
-  SpeedTestResult, NetThroughput, DashboardMode, MonitorStore,
+  SpeedTestResult, NetThroughput, DashboardMode, ExpandedPanel, MonitorStore,
 } from "./types";
 import { LIVE_STREAMS } from "./constants";
 import { propagateTLE, formatUptime, tzTime } from "./utils";
@@ -20,6 +20,7 @@ export function useMonitorData(): MonitorStore {
   const [activeStream, setActiveStream] = createSignal(0);
   const [showStream, setShowStream] = createSignal(false);
   const [showModeMenu, setShowModeMenu] = createSignal(false);
+  const [expandedPanel, setExpandedPanel] = createSignal<ExpandedPanel>(null);
 
   // Data
   const [iss, setISS] = createSignal<ISSPos | null>(null);
@@ -160,6 +161,7 @@ export function useMonitorData(): MonitorStore {
     globeReady, setGlobeReady,
     streamMuted, setStreamMuted, activeStream, setActiveStream,
     showStream, setShowStream, showModeMenu, setShowModeMenu,
+    expandedPanel, setExpandedPanel,
     iss, setISS, news, setNews, stats, setStats,
     activity, setActivity, weather, setWeather, quakes, setQuakes,
     crypto, setCrypto, publicIp, setPublicIp, threats, setThreats,

@@ -396,6 +396,77 @@
   gap: 0;
   min-height: 0;
   overflow: hidden;
+  transition: grid-template-columns 0.3s ease;
+}
+
+/* ─── Panel Expand Wrapper ─── */
+.fcmd-panel-expand-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  transition: opacity 0.25s ease;
+}
+
+/* ─── Fullscreen Panel Mode ─── */
+.fcmd-globe-wrap {
+  transition: opacity 0.25s ease;
+}
+
+/* Expanded left */
+.fcmd-dashboard[data-expanded="left"] .fcmd-main {
+  grid-template-columns: 1fr 0 0;
+}
+.fcmd-dashboard[data-expanded="left"] .fcmd-globe-wrap,
+.fcmd-dashboard[data-expanded="left"] .fcmd-main > .fcmd-panel-expand-wrap:last-child {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Expanded globe */
+.fcmd-dashboard[data-expanded="globe"] .fcmd-main {
+  grid-template-columns: 0 1fr 0;
+}
+.fcmd-dashboard[data-expanded="globe"] .fcmd-panel-expand-wrap {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Expanded right */
+.fcmd-dashboard[data-expanded="right"] .fcmd-main {
+  grid-template-columns: 0 0 1fr;
+}
+.fcmd-dashboard[data-expanded="right"] .fcmd-globe-wrap,
+.fcmd-dashboard[data-expanded="right"] .fcmd-main > .fcmd-panel-expand-wrap:first-child {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Restore button */
+.fcmd-panel-restore {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--fcmd-border);
+  border-radius: 6px;
+  color: var(--fcmd-text);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all var(--fcmd-transition);
+}
+.fcmd-panel-restore:hover {
+  opacity: 1;
+  background: rgba(0, 255, 65, 0.1);
+  border-color: rgba(0, 255, 65, 0.3);
 }
 
 /* ═══════════════════════════════════════════════════════════════════

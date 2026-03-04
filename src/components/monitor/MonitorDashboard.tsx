@@ -1,5 +1,5 @@
 import { onMount, onCleanup, createEffect, on, Show } from "solid-js";
-import type { DashboardMode } from "./types";
+import type { DashboardMode, ExpandedPanel } from "./types";
 import { useMonitorData } from "./useMonitorData";
 import { generateThreats } from "./utils";
 import {
@@ -81,6 +81,7 @@ export default function MonitorDashboard(props: Props) {
     // Keyboard
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (store.expandedPanel()) { store.setExpandedPanel(null); return; }
         if (store.showModeMenu()) { store.setShowModeMenu(false); return; }
         props.onClose();
       }
@@ -112,22 +113,46 @@ export default function MonitorDashboard(props: Props) {
     });
   });
 
+  function togglePanel(panel: ExpandedPanel) {
+    store.setExpandedPanel((p) => p === panel ? null : panel);
+  }
+
   return (
     <div class="fcmd-overlay" onClick={() => props.onClose()}>
-      <div class="fcmd-dashboard" onClick={(e) => e.stopPropagation()}>
+      <div
+        class="fcmd-dashboard"
+        data-expanded={store.expandedPanel() || undefined}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div class="fcmd-scanlines" />
         <div class="fcmd-vignette" />
 
         <TopBar store={store} onClose={props.onClose} />
 
         <main class="fcmd-main">
-          <LeftPanel
-            store={store}
-            onFocusGlobe={handleFocusGlobe}
-            onPauseRotation={handlePauseRotation}
-          />
+          <div class="fcmd-panel-expand-wrap" onDblClick={() => togglePanel("left")}>
+            <Show when={store.expandedPanel() === "left"}>
+              <button class="fcmd-panel-restore" onClick={() => store.setExpandedPanel(null)} title="Restore (Esc)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+              </button>
+            </Show>
+            <LeftPanel
+              store={store}
+              onFocusGlobe={handleFocusGlobe}
+              onPauseRotation={handlePauseRotation}
+            />
+          </div>
 
-          <div class="fcmd-globe-wrap" onClick={() => store.showModeMenu() && store.setShowModeMenu(false)}>
+          <div
+            class="fcmd-globe-wrap"
+            onDblClick={() => togglePanel("globe")}
+            onClick={() => store.showModeMenu() && store.setShowModeMenu(false)}
+          >
+            <Show when={store.expandedPanel() === "globe"}>
+              <button class="fcmd-panel-restore" onClick={() => store.setExpandedPanel(null)} title="Restore (Esc)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+              </button>
+            </Show>
             <div ref={globeContainerRef!} class="fcmd-globe-container" />
 
             <Show when={!store.globeReady()}>
@@ -140,7 +165,14 @@ export default function MonitorDashboard(props: Props) {
             <GlobeOverlays store={store} onModeSwitch={handleSwitchMode} />
           </div>
 
-          <RightPanel store={store} />
+          <div class="fcmd-panel-expand-wrap" onDblClick={() => togglePanel("right")}>
+            <Show when={store.expandedPanel() === "right"}>
+              <button class="fcmd-panel-restore" onClick={() => store.setExpandedPanel(null)} title="Restore (Esc)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+              </button>
+            </Show>
+            <RightPanel store={store} />
+          </div>
         </main>
 
         <BottomTicker store={store} />
