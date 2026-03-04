@@ -18,16 +18,11 @@ import ShortcutHelp from "./components/ShortcutHelp";
 import MCPPanel from "./components/MCPPanel";
 import MCPChat from "./components/MCPChat";
 import MonitorDashboard from "./components/MonitorDashboard";
+import type { AppConfig, Tab } from "./types";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
 import "./styles/monitor.css";
-
-interface Tab {
-  id: string;
-  title: string;
-  cwd: string;
-}
 
 export default function App() {
   const [tabs, setTabs] = createSignal<Tab[]>([]);
@@ -37,7 +32,7 @@ export default function App() {
   const [showSettings, setShowSettings] = createSignal(false);
   const [showSidebar, setShowSidebar] = createSignal(false);
   const [showSnippets, setShowSnippets] = createSignal(false);
-  const [config, setConfig] = createSignal<any>(null);
+  const [config, setConfig] = createSignal<AppConfig | null>(null);
   const [loaded, setLoaded] = createSignal(false);
   const [showShortcuts, setShowShortcuts] = createSignal(false);
   const [showMCP, setShowMCP] = createSignal(false);
@@ -50,9 +45,9 @@ export default function App() {
   onMount(async () => {
     // Load config
     try {
-      const cfg = await invoke("get_config");
+      const cfg = (await invoke("get_config")) as AppConfig;
       setConfig(cfg);
-      await theme.loadTheme((cfg as any).theme || "hacker-green");
+      await theme.loadTheme(cfg.theme || "hacker-green");
     } catch (_) {
       await theme.loadTheme("hacker-green");
     }
@@ -151,7 +146,7 @@ export default function App() {
   async function handleThemeChange(themeName: string) {
     await theme.loadTheme(themeName);
     try {
-      const cfg = await invoke("get_config");
+      const cfg = (await invoke("get_config")) as AppConfig;
       setConfig(cfg);
     } catch (_) {}
   }
@@ -222,7 +217,7 @@ export default function App() {
     }
   }
 
-  const fx = () => config()?.effects || {};
+  const fx = () => config()?.effects || ({} as Partial<import("./types").EffectsConfig>);
   const themeAccent = () =>
     theme.currentTheme()?.accent ||
     theme.currentTheme()?.effects?.glowColor ||
@@ -328,7 +323,7 @@ export default function App() {
           onClose={() => {
             setShowSettings(false);
             invoke("get_config")
-              .then((cfg) => setConfig(cfg))
+              .then((cfg) => setConfig(cfg as AppConfig))
               .catch(() => {});
           }}
           onThemeChange={handleThemeChange}

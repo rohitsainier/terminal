@@ -6,12 +6,14 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { useTerminal } from "../hooks/useTerminal";
 import Autocomplete from "./Autocomplete";
 import type { Suggestion } from "./Autocomplete";
+import type { AppConfig, ThemeColors } from "../types";
+import { toXtermCursorStyle } from "../types";
 import "@xterm/xterm/css/xterm.css";
 
 interface Props {
   sessionId: string;
-  theme: any;
-  config: any;
+  theme: ThemeColors | null;
+  config: AppConfig | null;
 }
 
 export default function Terminal(props: Props) {
@@ -31,7 +33,7 @@ export default function Terminal(props: Props) {
   const [acSuggestions, setAcSuggestions] = createSignal<Suggestion[]>([]);
   const [acIndex, setAcIndex] = createSignal(0);
 
-  function buildXtermTheme(t: any) {
+  function buildXtermTheme(t: ThemeColors | null) {
     if (!t) return { background: "#0a0e14", foreground: "#00ff41", cursor: "#00ff41" };
     return {
       background: t.background || "#0a0e14",
@@ -77,7 +79,7 @@ export default function Terminal(props: Props) {
       term.options.fontFamily = c.font_family;
       refit = true;
     }
-    if (c.cursor_style) term.options.cursorStyle = c.cursor_style as any;
+    if (c.cursor_style) term.options.cursorStyle = toXtermCursorStyle(c.cursor_style);
     if (c.cursor_blink !== undefined) term.options.cursorBlink = c.cursor_blink;
 
     if (refit && fitAddon && pty.isConnected()) {
@@ -165,7 +167,7 @@ export default function Terminal(props: Props) {
         "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Menlo', monospace",
       fontSize: c?.font_size || 14,
       lineHeight: 1.2,
-      cursorStyle: (c?.cursor_style as any) || "block",
+      cursorStyle: toXtermCursorStyle(c?.cursor_style),
       cursorBlink: c?.cursor_blink ?? true,
       allowTransparency: true,
       scrollback: 10000,

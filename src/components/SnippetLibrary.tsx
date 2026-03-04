@@ -1,15 +1,6 @@
-import { createSignal, onMount, Show, For } from "solid-js";
+import { createSignal, createMemo, onMount, Show, For } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-
-interface Snippet {
-  id: string;
-  name: string;
-  command: string;
-  icon: string;
-  tags: string[];
-  category?: string;
-  description?: string;
-}
+import type { Snippet } from "../types";
 
 interface Props {
   sessionId: string;
@@ -44,17 +35,15 @@ export default function SnippetLibrary(props: Props) {
     } catch (_) {}
   }
 
-  function filtered() {
+  const filtered = createMemo(() => {
     let list = snippets();
 
-    // Category filter
     if (selectedCategory() !== "all") {
       list = list.filter(
         (s) => s.category?.toLowerCase() === selectedCategory().toLowerCase()
       );
     }
 
-    // Search filter
     const q = search().toLowerCase();
     if (q) {
       list = list.filter(
@@ -67,7 +56,7 @@ export default function SnippetLibrary(props: Props) {
     }
 
     return list;
-  }
+  });
 
   async function runSnippet(snippet: Snippet) {
     await invoke("run_snippet", { id: snippet.id, sessionId: props.sessionId });

@@ -1722,3 +1722,143 @@
   font-family: "JetBrains Mono", monospace; font-size: 11px;
   color: var(--accent); line-height: 1.4; white-space: pre-wrap; word-break: break-all;
 }
+
+/* ── Plan Card ── */
+
+.mcpc-plan-card {
+  margin-left: 34px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.mcpc-plan-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  background: var(--tab-active);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.mcpc-plan-icon { font-size: 16px; }
+.mcpc-plan-title {
+  font-weight: 600;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.mcpc-plan-steps {
+  display: flex; flex-direction: column;
+  padding: 8px 0;
+}
+
+.mcpc-plan-step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px;
+  font-size: 12px;
+  transition: background .15s;
+}
+.mcpc-plan-step:hover { background: var(--tab-active); }
+.mcpc-plan-step-active { background: var(--tab-active); }
+
+.mcpc-plan-step-indicator {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+  font-family: "JetBrains Mono", monospace;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border);
+  color: var(--fg);
+  opacity: .4;
+  transition: all .2s;
+}
+
+/* Step status colors */
+.mcpc-plan-step.pending .mcpc-plan-step-indicator {
+  border-color: var(--border); opacity: .35;
+}
+.mcpc-plan-step.running .mcpc-plan-step-indicator {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+  animation: mcpc-pulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--accent-dim);
+}
+.mcpc-plan-step.completed .mcpc-plan-step-indicator {
+  border-color: #4caf50; color: #4caf50; opacity: 1;
+  background: rgba(76,175,80,.1);
+}
+.mcpc-plan-step.error .mcpc-plan-step-indicator {
+  border-color: #ff5555; color: #ff5555; opacity: 1;
+  background: rgba(255,85,85,.1);
+}
+.mcpc-plan-step.skipped .mcpc-plan-step-indicator {
+  border-color: var(--border); opacity: .2;
+}
+
+@keyframes mcpc-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--accent-dim); }
+  50% { box-shadow: 0 0 12px var(--accent-dim); }
+}
+
+.mcpc-plan-step-desc {
+  flex: 1;
+  line-height: 1.4;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+.mcpc-plan-step.pending .mcpc-plan-step-desc { opacity: .4; }
+.mcpc-plan-step.running .mcpc-plan-step-desc { opacity: 1; color: var(--accent); }
+.mcpc-plan-step.completed .mcpc-plan-step-desc { opacity: .6; text-decoration: line-through; text-decoration-color: rgba(76,175,80,.3); }
+.mcpc-plan-step.error .mcpc-plan-step-desc { opacity: .7; color: #ff5555; }
+.mcpc-plan-step.skipped .mcpc-plan-step-desc { opacity: .25; text-decoration: line-through; }
+
+.mcpc-plan-step-tool {
+  font-size: 9px;
+  padding: 1px 6px;
+  background: var(--tab-active);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: "JetBrains Mono", monospace;
+  opacity: .35;
+  flex-shrink: 0;
+}
+.mcpc-plan-step.running .mcpc-plan-step-tool { opacity: .6; border-color: var(--accent-dim); }
+
+/* Plan action buttons */
+.mcpc-plan-actions {
+  display: flex; gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+.mcpc-plan-execute {
+  flex: 1;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.mcpc-plan-execute:hover {
+  box-shadow: 0 0 12px var(--accent-dim);
+  transform: translateY(-1px);
+}
+.mcpc-plan-cancel {
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: .5;
+  transition: all .15s;
+}
+.mcpc-plan-cancel:hover { opacity: 1; border-color: #ff5555; color: #ff5555; }
