@@ -5,7 +5,7 @@ use crate::snippets::SnippetManager;
 use crate::ssh::{SSHConnection, SSHManager};
 use crate::terminal::{CommandHistoryEntry, SessionManager};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 pub struct AppState {
@@ -15,7 +15,7 @@ pub struct AppState {
     pub snippet_manager: Mutex<SnippetManager>,
     pub ssh_manager: Mutex<SSHManager>,
     pub session_manager: Mutex<SessionManager>,
-    pub mcp_manager: Mutex<crate::mcp::MCPManager>,
+    pub mcp_manager: Arc<Mutex<crate::mcp::MCPManager>>,
 }
 
 // ─── Lock Helpers ────────────────────────────────
@@ -648,21 +648,41 @@ pub async fn mcp_ai_step(
     let os = std::env::consts::OS;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
 
+    eprintln!("[mcp_ai_step] Calling chat_with_tools with {} messages, plan_step={:?}", messages.len(), plan_step);
+
     let response = engine
         .chat_with_tools(&messages, &mcp_context, os, &shell, plan_step.as_deref())
         .await?;
 
     match response {
-        crate::ai::ChatResponse::Message(msg) => Ok(serde_json::json!({
-            "type": "message",
-            "content": msg
-        })),
+        crate::ai::ChatResponse::Message(msg) => {
+            eprintln!("[mcp_ai_step] AI returned message (len={})", msg.len());
+            Ok(serde_json::json!({
+                "type": "message",
+                "content": msg
+            }))
+        }
         crate::ai::ChatResponse::ToolCall { server, tool, arguments } => {
-            let tool_result = call_mcp_tool(&state, &server, &tool, arguments.clone());
+            eprintln!("[mcp_ai_step] AI wants tool call: {}/{}", server, tool);
+
+            // Run blocking MCP tool call on a dedicated thread to avoid blocking the async runtime.
+            // MCP tool calls do synchronous stdin/stdout I/O with the server process.
+            let mcp_manager = Arc::clone(&state.mcp_manager);
+            let server_clone = server.clone();
+            let tool_clone = tool.clone();
+            let args_clone = arguments.clone();
+
+            let tool_result = tokio::task::spawn_blocking(move || {
+                let mut manager = mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager".to_string())?;
+                manager.call_tool(&server_clone, &tool_clone, args_clone)
+            })
+            .await
+            .map_err(|e| format!("Tool execution task panicked: {}", e))?;
 
             match tool_result {
                 Ok(result) => {
                     let text = format_tool_result_text(&result);
+                    eprintln!("[mcp_ai_step] Tool {}/{} result: is_error={}, text={}", server, tool, result.is_error, &text[..text.len().min(300)]);
 
                     Ok(serde_json::json!({
                         "type": "tool_call",
@@ -673,13 +693,16 @@ pub async fn mcp_ai_step(
                         "is_error": result.is_error
                     }))
                 }
-                Err(e) => Ok(serde_json::json!({
-                    "type": "tool_error",
-                    "server": server,
-                    "tool": tool,
-                    "arguments": arguments,
-                    "error": e
-                })),
+                Err(e) => {
+                    eprintln!("[mcp_ai_step] Tool error: {}", e);
+                    Ok(serde_json::json!({
+                        "type": "tool_error",
+                        "server": server,
+                        "tool": tool,
+                        "arguments": arguments,
+                        "error": e
+                    }))
+                }
             }
         }
     }

@@ -15,7 +15,7 @@ use mcp::MCPManager;
 use pty::PtyManager;
 use snippets::SnippetManager;
 use ssh::SSHManager;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use terminal::SessionManager;
 
 fn main() {
@@ -42,7 +42,7 @@ fn main() {
         snippet_manager: Mutex::new(snippet_manager),
         ssh_manager: Mutex::new(ssh_manager),
         session_manager: Mutex::new(session_manager),
-        mcp_manager: Mutex::new(mcp_manager),
+        mcp_manager: Arc::new(Mutex::new(mcp_manager)),
     };
 
     tauri::Builder::default()

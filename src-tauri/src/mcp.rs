@@ -624,7 +624,8 @@ impl MCPManager {
             .map_err(|e| format!("Flush error: {}", e))?;
 
         // Wait for response with matching ID
-        let timeout = Duration::from_secs(30);
+        // Use 120s timeout to support long-running tools (e.g. Blender, rendering)
+        let timeout = Duration::from_secs(120);
         let deadline = Instant::now() + timeout;
 
         loop {

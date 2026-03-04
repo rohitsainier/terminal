@@ -1632,6 +1632,23 @@
 }
 .mcpc-copy:hover { opacity: 1; }
 
+.mcpc-tool-result-inline {
+  border-top: 1px solid var(--border);
+  padding: 6px 12px;
+}
+.mcpc-tool-result-inline pre {
+  margin: 0;
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  color: var(--accent); opacity: .8; line-height: 1.4;
+  max-height: 80px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+.mcpc-tool-result-error pre {
+  color: #ff5555; opacity: 1;
+}
+.mcpc-tool-errored {
+  border-color: rgba(255,85,85,.3);
+}
+
 /* ── Busy / Loading ── */
 
 .mcpc-busy {
@@ -1862,3 +1879,19 @@
   transition: all .15s;
 }
 .mcpc-plan-cancel:hover { opacity: 1; border-color: #ff5555; color: #ff5555; }
+
+.mcpc-plan-execute-pulse {
+  animation: mcpc-execute-glow 2s ease-in-out infinite;
+}
+@keyframes mcpc-execute-glow {
+  0%, 100% { box-shadow: 0 0 6px var(--accent-dim); }
+  50% { box-shadow: 0 0 18px var(--accent-dim), 0 0 4px var(--accent); }
+}
+
+.mcpc-plan-hint {
+  padding: 4px 14px 8px;
+  font-size: 10px;
+  opacity: .45;
+  text-align: center;
+  font-family: "JetBrains Mono", monospace;
+}

@@ -37,8 +37,9 @@ interface Props {
   onRunCommand: (cmd: string) => void;
 }
 
-// Safety limit
+// Safety limits
 const STEP_LIMIT = 30;
+const PER_STEP_TOOL_LIMIT = 10;
 
 export default function MCPChat(props: Props) {
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
@@ -54,7 +55,7 @@ export default function MCPChat(props: Props) {
   const [planSteps, setPlanSteps] = createSignal<PlanStep[]>([]);
   const [currentPlanStep, setCurrentPlanStep] = createSignal(0);
   const [planMode, setPlanMode] = createSignal<
-    "none" | "planning" | "reviewing" | "executing" | "done"
+    "none" | "planning" | "executing" | "done"
   >("none");
 
   let messagesEnd: HTMLDivElement | undefined;
@@ -93,7 +94,9 @@ export default function MCPChat(props: Props) {
     return msg;
   }
 
-  // Build the AI conversation from our visible messages
+  // Build the AI conversation from our visible messages.
+  // Tool calls are represented as assistant JSON (matching the format the AI produces)
+  // followed by a tool_result from the "user" side.
   function toAIMessages(): AIMessage[] {
     return messages()
       .filter((m) => m.role !== "system" && m.role !== "plan")
@@ -105,16 +108,22 @@ export default function MCPChat(props: Props) {
           return [{ role: "assistant", content: m.content }];
         }
         if (m.role === "tool" && m.tool) {
-          return [
-            {
-              role: "assistant",
-              content: `I called tool "${m.tool.name}" on server "${m.tool.server}" with arguments: ${JSON.stringify(m.tool.arguments)}`,
+          // Mirror the exact JSON format the AI would have produced
+          const toolCallJson = JSON.stringify({
+            tool_call: {
+              server: m.tool.server,
+              tool: m.tool.name,
+              arguments: m.tool.arguments,
             },
+          });
+          const resultText = m.tool.isError
+            ? `Error: ${m.tool.result}`
+            : m.tool.result || "Done (no output)";
+          return [
+            { role: "assistant", content: toolCallJson },
             {
               role: "tool_result",
-              content: m.tool.isError
-                ? `Error: ${m.tool.result}`
-                : m.tool.result || "Done (no output)",
+              content: `${resultText}\n\n[SYSTEM: Tool call completed. Continue with the next tool call to complete the task. Only respond with {"message": "..."} when the ENTIRE user request is fully done.]`,
             },
           ];
         }
@@ -192,11 +201,13 @@ export default function MCPChat(props: Props) {
         setPlan(taskPlan);
         setPlanSteps(taskPlan.steps);
         setCurrentPlanStep(0);
-        setPlanMode("reviewing");
-        setStatus("");
+        setPlanMode("executing");
 
         // Show plan as a message
         push({ role: "plan", content: "", plan: taskPlan });
+
+        // Auto-execute the plan immediately
+        await agentLoop(taskPlan);
       } else {
         // No MCP tools — just run the agent directly
         setPlanMode("none");
@@ -205,49 +216,13 @@ export default function MCPChat(props: Props) {
     } catch (err: any) {
       push({ role: "error", content: String(err) });
     } finally {
-      if (planMode() !== "reviewing") {
-        setBusy(false);
-        setStatus("");
-        setToolSteps(0);
-        inputRef?.focus();
-      } else {
-        // Still reviewing — keep busy false so user can interact
-        setBusy(false);
-        setStatus("");
-      }
-    }
-  }
-
-  async function executePlan() {
-    const currentPlan = plan();
-    if (!currentPlan) return;
-
-    setBusy(true);
-    setPlanMode("executing");
-    setAborted(false);
-
-    try {
-      await agentLoop(currentPlan);
-    } catch (err: any) {
-      push({ role: "error", content: String(err) });
-    } finally {
       setBusy(false);
       setStatus("");
       setToolSteps(0);
-      setPlanMode("done");
+      setPlanMode((prev) => prev === "executing" ? "done" : "none");
       setPlan(null);
       inputRef?.focus();
     }
-  }
-
-  function cancelPlan() {
-    setPlan(null);
-    setPlanSteps([]);
-    setPlanMode("none");
-    setBusy(false);
-    setStatus("");
-    push({ role: "system", content: "Plan cancelled." });
-    inputRef?.focus();
   }
 
   // ─── Core Agent Loop ───────────────────
@@ -256,6 +231,7 @@ export default function MCPChat(props: Props) {
     let steps = 0;
     let consecutiveErrors = 0;
     let planStepIndex = 0;
+    let stepToolCalls = 0;
 
     // If we have a plan, update the first step to running
     if (taskPlan) {
@@ -292,6 +268,7 @@ export default function MCPChat(props: Props) {
 
       // Call AI with full conversation + plan context
       const conversation = toAIMessages();
+      console.log(`[MCP] Step ${steps}, planStep=${planStepIndex}, sending ${conversation.length} messages`);
       let response: any;
 
       try {
@@ -299,7 +276,9 @@ export default function MCPChat(props: Props) {
           messages: conversation,
           planStep: planStepDesc,
         });
+        console.log("[MCP] Response:", response.type, response.type === "tool_call" ? response.tool : response.type === "message" ? response.content?.slice(0, 100) : response.error);
       } catch (err: any) {
+        console.error("[MCP] invoke error:", err);
         push({ role: "error", content: `AI error: ${err}` });
         if (taskPlan) updatePlanStepStatus(planStepIndex, "error");
         return;
@@ -315,6 +294,8 @@ export default function MCPChat(props: Props) {
 
           // Move to next plan step
           planStepIndex++;
+          stepToolCalls = 0;
+          consecutiveErrors = 0;
           if (planStepIndex < taskPlan.steps.length) {
             // More steps remain — continue the loop
             updatePlanStepStatus(planStepIndex, "running");
@@ -328,8 +309,33 @@ export default function MCPChat(props: Props) {
       // ── AI wants to call a tool ──
       if (response.type === "tool_call") {
         steps++;
+        stepToolCalls++;
         consecutiveErrors = 0;
         setToolSteps(steps);
+
+        // Per-step tool limit: force step completion if too many calls in one step
+        if (taskPlan && stepToolCalls >= PER_STEP_TOOL_LIMIT) {
+          push({
+            role: "tool",
+            content: "",
+            tool: {
+              server: response.server,
+              name: response.tool,
+              arguments: response.arguments,
+              result: response.result,
+              isError: response.is_error,
+            },
+          });
+          updatePlanStepStatus(planStepIndex, "completed");
+          push({ role: "system", content: `Step ${planStepIndex + 1} auto-completed after ${PER_STEP_TOOL_LIMIT} tool calls.` });
+          planStepIndex++;
+          stepToolCalls = 0;
+          if (planStepIndex < taskPlan.steps.length) {
+            updatePlanStepStatus(planStepIndex, "running");
+            continue;
+          }
+          return;
+        }
         setStatus(
           planStepDesc
             ? `${planStepDesc} — Running: ${response.tool}`
@@ -373,7 +379,23 @@ export default function MCPChat(props: Props) {
         });
 
         if (consecutiveErrors >= 3) {
-          if (taskPlan) updatePlanStepStatus(planStepIndex, "error");
+          if (taskPlan) {
+            updatePlanStepStatus(planStepIndex, "error");
+            push({
+              role: "system",
+              content: `Step ${planStepIndex + 1} failed after 3 consecutive errors — skipping to next step.`,
+            });
+
+            // Skip to next plan step instead of halting entirely
+            planStepIndex++;
+            consecutiveErrors = 0;
+            if (planStepIndex < taskPlan.steps.length) {
+              updatePlanStepStatus(planStepIndex, "running");
+              continue;
+            }
+            // All steps exhausted
+            return;
+          }
           push({
             role: "system",
             content: "Too many consecutive errors — stopping to avoid an infinite loop.",
@@ -552,16 +574,6 @@ export default function MCPChat(props: Props) {
                         )}
                       </For>
                     </div>
-                    <Show when={planMode() === "reviewing"}>
-                      <div class="mcpc-plan-actions">
-                        <button class="mcpc-plan-execute" onClick={executePlan}>
-                          ▶ Execute Plan
-                        </button>
-                        <button class="mcpc-plan-cancel" onClick={cancelPlan}>
-                          Cancel
-                        </button>
-                      </div>
-                    </Show>
                   </div>
                 </Show>
 
@@ -577,41 +589,38 @@ export default function MCPChat(props: Props) {
 
                 {/* Tool Call */}
                 <Show when={msg.role === "tool" && msg.tool}>
-                  <div class="mcpc-tool">
-                    <div class="mcpc-tool-header">
-                      <span class="mcpc-tool-icon">
-                        {msg.tool!.isError ? "❌" : "✅"}
-                      </span>
-                      <span class="mcpc-tool-name">{msg.tool!.name}</span>
-                      <span class="mcpc-tool-server">{msg.tool!.server}</span>
-                    </div>
+                  {(() => {
+                    const resultText = msg.tool!.result || "";
+                    const hasError = msg.tool!.isError || resultText.toLowerCase().startsWith("error:");
+                    return (
+                      <div class={`mcpc-tool ${hasError ? "mcpc-tool-errored" : ""}`}>
+                        <div class="mcpc-tool-header">
+                          <span class="mcpc-tool-icon">
+                            {hasError ? "❌" : "✅"}
+                          </span>
+                          <span class="mcpc-tool-name">{msg.tool!.name}</span>
+                          <span class="mcpc-tool-server">{msg.tool!.server}</span>
+                        </div>
 
-                    <Show when={msg.tool!.arguments && Object.keys(msg.tool!.arguments).length > 0}>
-                      <details class="mcpc-tool-section">
-                        <summary>Arguments</summary>
-                        <pre>{JSON.stringify(msg.tool!.arguments, null, 2)}</pre>
-                      </details>
-                    </Show>
+                        <Show when={msg.tool!.arguments && Object.keys(msg.tool!.arguments).length > 0}>
+                          <details class="mcpc-tool-section">
+                            <summary>Arguments</summary>
+                            <pre>{JSON.stringify(msg.tool!.arguments, null, 2)}</pre>
+                          </details>
+                        </Show>
 
-                    <Show when={msg.tool!.result}>
-                      <details class="mcpc-tool-section" open={!!msg.tool!.isError}>
-                        <summary>
-                          <span>Result</span>
-                          <button
-                            class="mcpc-copy"
-                            onClick={() => navigator.clipboard.writeText(msg.tool!.result || "")}
-                          >
-                            📋
-                          </button>
-                        </summary>
-                        <pre>
-                          {(msg.tool!.result || "").length > 500
-                            ? msg.tool!.result!.slice(0, 500) + "\n…truncated"
-                            : msg.tool!.result}
-                        </pre>
-                      </details>
-                    </Show>
-                  </div>
+                        <Show when={resultText}>
+                          <div class={`mcpc-tool-result-inline ${hasError ? "mcpc-tool-result-error" : ""}`}>
+                            <pre>
+                              {resultText.length > 500
+                                ? resultText.slice(0, 500) + "\n…truncated"
+                                : resultText}
+                            </pre>
+                          </div>
+                        </Show>
+                      </div>
+                    );
+                  })()}
                 </Show>
 
                 {/* Error */}
@@ -663,20 +672,14 @@ export default function MCPChat(props: Props) {
             value={input()}
             onInput={(e) => setInput(e.currentTarget.value)}
             onKeyDown={onKeyDown}
-            placeholder={
-              busy()
-                ? "Working..."
-                : planMode() === "reviewing"
-                  ? "Review the plan above, then Execute or Cancel"
-                  : "Describe a task…"
-            }
+            placeholder={busy() ? "Working..." : "Describe a task…"}
             rows={1}
-            disabled={busy() || planMode() === "reviewing"}
+            disabled={busy()}
           />
           <button
             class="mcpc-send"
             onClick={() => send()}
-            disabled={busy() || !input().trim() || planMode() === "reviewing"}
+            disabled={busy() || !input().trim()}
           >
             {busy() ? "…" : "↑"}
           </button>
