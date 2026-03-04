@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
+use pbkdf2::pbkdf2_hmac;
 
 // ═══════════════════════════════════════════════════════════════════
 //  TYPES
@@ -3558,154 +3561,230 @@ pub async fn netops_handshake_analyze(
 }
 
 // ─── Synthetic PCAP Builder ────────────────────────────────────────
-fn build_handshake_pcap(bssid: &str, security: &str) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(1024);
+// ─── WPA2 PRF (Pseudo-Random Function) ────────────────────────────────────
 
-    // ── PCAP Global Header (24 bytes, little-endian) ──
-    buf.extend_from_slice(&0xA1B2C3D4u32.to_le_bytes()); // magic
-    buf.extend_from_slice(&2u16.to_le_bytes());           // version major
-    buf.extend_from_slice(&4u16.to_le_bytes());           // version minor
-    buf.extend_from_slice(&0i32.to_le_bytes());           // timezone
-    buf.extend_from_slice(&0u32.to_le_bytes());           // sigfigs
-    buf.extend_from_slice(&65535u32.to_le_bytes());       // snaplen
-    buf.extend_from_slice(&1u32.to_le_bytes());           // link type: Ethernet
+type HmacSha1 = Hmac<Sha1>;
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
+fn wpa2_prf(key: &[u8], label: &[u8], data: &[u8], out_len: usize) -> Vec<u8> {
+    let mut result = Vec::with_capacity(out_len);
+    let mut i: u8 = 0;
+    while result.len() < out_len {
+        let mut mac = HmacSha1::new_from_slice(key).unwrap();
+        mac.update(label);
+        mac.update(&[0x00]);
+        mac.update(data);
+        mac.update(&[i]);
+        result.extend_from_slice(&mac.finalize().into_bytes());
+        i += 1;
+    }
+    result.truncate(out_len);
+    result
+}
+
+fn compute_ptk(pmk: &[u8; 32], aa: &[u8; 6], spa: &[u8; 6], anonce: &[u8; 32], snonce: &[u8; 32]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(76);
+    // min(AA, SPA) || max(AA, SPA)
+    if aa < spa {
+        data.extend_from_slice(aa);
+        data.extend_from_slice(spa);
+    } else {
+        data.extend_from_slice(spa);
+        data.extend_from_slice(aa);
+    }
+    // min(ANonce, SNonce) || max(ANonce, SNonce)
+    if anonce < snonce {
+        data.extend_from_slice(anonce);
+        data.extend_from_slice(snonce);
+    } else {
+        data.extend_from_slice(snonce);
+        data.extend_from_slice(anonce);
+    }
+    wpa2_prf(pmk, b"Pairwise key expansion", &data, 48) // 384 bits for CCMP
+}
+
+fn compute_mic(kck: &[u8], eapol_frame: &[u8]) -> [u8; 16] {
+    let mut mac = HmacSha1::new_from_slice(kck).unwrap();
+    mac.update(eapol_frame);
+    let result = mac.finalize().into_bytes();
+    let mut mic = [0u8; 16];
+    mic.copy_from_slice(&result[..16]);
+    mic
+}
+
+fn parse_mac_bytes(mac_str: &str) -> [u8; 6] {
+    let parts: Vec<u8> = mac_str.split(':')
+        .filter_map(|h| u8::from_str_radix(h, 16).ok())
+        .collect();
+    if parts.len() == 6 {
+        [parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]]
+    } else {
+        [0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E]
+    }
+}
+
+fn write_pcap_record(buf: &mut Vec<u8>, ts_sec: u32, ts_usec: u32, pkt: &[u8]) {
+    let pkt_len = pkt.len() as u32;
+    buf.extend_from_slice(&ts_sec.to_le_bytes());
+    buf.extend_from_slice(&ts_usec.to_le_bytes());
+    buf.extend_from_slice(&pkt_len.to_le_bytes());
+    buf.extend_from_slice(&pkt_len.to_le_bytes());
+    buf.extend_from_slice(pkt);
+}
+
+fn build_handshake_pcap(bssid: &str, ssid: &str, passphrase: &str, security: &str) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(4096);
+
+    // ── PCAP Global Header — DLT_IEEE802_11 (link type 105) ──
+    buf.extend_from_slice(&0xA1B2C3D4u32.to_le_bytes());
+    buf.extend_from_slice(&2u16.to_le_bytes());
+    buf.extend_from_slice(&4u16.to_le_bytes());
+    buf.extend_from_slice(&0i32.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&65535u32.to_le_bytes());
+    buf.extend_from_slice(&105u32.to_le_bytes()); // DLT_IEEE802_11
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let base_ts = now.as_secs() as u32;
 
-    // Parse BSSID → 6-byte MAC
-    let ap_mac: [u8; 6] = {
-        let parts: Vec<u8> = bssid.split(':')
-            .filter_map(|h| u8::from_str_radix(h, 16).ok())
-            .collect();
-        if parts.len() == 6 {
-            [parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]]
-        } else {
-            [0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E] // fallback
-        }
-    };
+    let ap_mac = parse_mac_bytes(bssid);
     let client_mac: [u8; 6] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+    let ssid_bytes = ssid.as_bytes();
 
-    // Key descriptor type: 0x02 for RSN (WPA2/WPA3), 0xFE for WPA
     let desc_type: u8 = if security.contains("WPA2") || security.contains("WPA3") { 0x02 } else { 0xFE };
-
-    // Key length: 16 for CCMP (WPA2/WPA3), 32 for TKIP (WPA)
     let key_len: u16 = if desc_type == 0x02 { 16 } else { 32 };
 
-    // Generate synthetic nonces (deterministic from BSSID for reproducibility)
+    // ── WPA2 Key Derivation ──
+    let mut pmk = [0u8; 32];
+    pbkdf2_hmac::<Sha1>(passphrase.as_bytes(), ssid_bytes, 4096, &mut pmk);
+
     let mut anonce = [0u8; 32];
     let mut snonce = [0u8; 32];
     for i in 0..32 {
-        anonce[i] = ap_mac[i % 6].wrapping_mul((i as u8).wrapping_add(0x37));
-        snonce[i] = client_mac[i % 6].wrapping_mul((i as u8).wrapping_add(0x5A));
+        anonce[i] = ap_mac[i % 6].wrapping_mul((i as u8).wrapping_add(0x37)).wrapping_add(0xA5);
+        snonce[i] = client_mac[i % 6].wrapping_mul((i as u8).wrapping_add(0x5A)).wrapping_add(0x3C);
     }
 
-    // Key Info flags per message (little-endian u16)
-    // Bit layout: [Ver(3)][Type(1)][Install(1)][Ack(1)][MIC(1)][Secure(1)][Error(1)][Request(1)][EncKeyData(1)]
+    let ptk = compute_ptk(&pmk, &ap_mac, &client_mac, &anonce, &snonce);
+    let kck = &ptk[..16];
+
+    // ── Packet 0: Beacon frame (carries SSID for hcxpcapngtool) ──
+    {
+        let mut beacon = Vec::with_capacity(128);
+        beacon.extend_from_slice(&[0x80, 0x00]); // Frame Control: Beacon
+        beacon.extend_from_slice(&[0x00, 0x00]); // Duration
+        beacon.extend_from_slice(&[0xFF; 6]);     // DA: broadcast
+        beacon.extend_from_slice(&ap_mac);        // SA: AP
+        beacon.extend_from_slice(&ap_mac);        // BSSID: AP
+        beacon.extend_from_slice(&[0x00, 0x00]); // Sequence Control
+        // Fixed params (12 bytes)
+        beacon.extend_from_slice(&[0u8; 8]);              // Timestamp
+        beacon.extend_from_slice(&[0x64, 0x00]);          // Beacon Interval (100 TU)
+        beacon.extend_from_slice(&[0x31, 0x04]);          // Capabilities (ESS, Short Preamble, Short Slot)
+        // Tagged: SSID
+        beacon.push(0x00);
+        beacon.push(ssid_bytes.len() as u8);
+        beacon.extend_from_slice(ssid_bytes);
+        // Tagged: Supported Rates
+        beacon.extend_from_slice(&[0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x24, 0x30, 0x48, 0x6c]);
+        // Tagged: DS Parameter (Channel 6)
+        beacon.extend_from_slice(&[0x03, 0x01, 0x06]);
+        // Tagged: RSN IE
+        beacon.extend_from_slice(&[
+            0x30, 0x14, 0x01, 0x00,
+            0x00, 0x0F, 0xAC, 0x04,
+            0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+            0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02,
+            0x00, 0x00,
+        ]);
+        write_pcap_record(&mut buf, base_ts, 0, &beacon);
+    }
+
+    // Key Info flags
     let key_infos: [u16; 4] = [
-        0x008A, // Msg1: Pairwise(0x08) + Ack(0x80) + Ver2(0x02)
-        0x010A, // Msg2: Pairwise(0x08) + MIC(0x100) + Ver2(0x02)
-        0x13CA, // Msg3: Pairwise(0x08) + Install(0x40) + Ack(0x80) + MIC(0x100) + Secure(0x200) + EncKeyData(0x1000) + Ver2(0x02)
-        0x030A, // Msg4: Pairwise(0x08) + MIC(0x100) + Secure(0x200) + Ver2(0x02)
+        0x008A, // M1: Pairwise + Ack + Ver2
+        0x010A, // M2: Pairwise + MIC + Ver2
+        0x13CA, // M3: Pairwise + Install + Ack + MIC + Secure + EncKeyData + Ver2
+        0x030A, // M4: Pairwise + MIC + Secure + Ver2
     ];
 
-    // Directions: true = AP→Client, false = Client→AP
+    // Replay counters: M1=M2 share 1, M3=M4 share 2
+    let replay_counters: [u64; 4] = [1, 1, 2, 2];
     let ap_to_client = [true, false, true, false];
 
-    // Synthetic RSN IE for Message 3 key data
     let rsn_ie: Vec<u8> = vec![
-        0x30,       // Element ID: RSN
-        0x14,       // Length: 20
-        0x01, 0x00, // RSN Version: 1
-        0x00, 0x0F, 0xAC, 0x04, // Group Cipher: CCMP
-        0x01, 0x00, // Pairwise Cipher Count: 1
-        0x00, 0x0F, 0xAC, 0x04, // Pairwise Cipher: CCMP
-        0x01, 0x00, // AKM Count: 1
-        0x00, 0x0F, 0xAC, 0x02, // AKM: PSK
-        0x00, 0x00, // RSN Capabilities
+        0x30, 0x14, 0x01, 0x00,
+        0x00, 0x0F, 0xAC, 0x04,
+        0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+        0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02,
+        0x00, 0x00,
     ];
 
+    // ── Packets 1-4: EAPOL 4-Way Handshake as 802.11 Data frames ──
     for msg_idx in 0..4u8 {
-        let mut pkt = Vec::with_capacity(128);
+        // M2 and M3 include RSN IE (hcxpcapngtool uses key_data_len > 0 to identify M2 vs M4)
+        let key_data = if msg_idx == 1 || msg_idx == 2 { &rsn_ie[..] } else { &[] };
+        let eapol_body_len: u16 = 95 + key_data.len() as u16;
 
-        // ── Ethernet Header (14 bytes) ──
-        if ap_to_client[msg_idx as usize] {
-            pkt.extend_from_slice(&client_mac); // dst
-            pkt.extend_from_slice(&ap_mac);     // src
-        } else {
-            pkt.extend_from_slice(&ap_mac);     // dst
-            pkt.extend_from_slice(&client_mac); // src
-        }
-        pkt.extend_from_slice(&0x888Eu16.to_be_bytes()); // EtherType: EAPOL
+        // Build EAPOL frame
+        let mut eapol = Vec::with_capacity(128);
+        eapol.push(0x02); // EAPOL version
+        eapol.push(0x03); // Type: EAPOL-Key
+        eapol.extend_from_slice(&eapol_body_len.to_be_bytes());
+        eapol.push(desc_type);
+        eapol.extend_from_slice(&key_infos[msg_idx as usize].to_be_bytes());
+        eapol.extend_from_slice(&key_len.to_be_bytes());
+        eapol.extend_from_slice(&replay_counters[msg_idx as usize].to_be_bytes());
 
-        // ── EAPOL Header (4 bytes) ──
-        // Key data for msg3 only
-        let key_data = if msg_idx == 2 { &rsn_ie[..] } else { &[] };
-        let eapol_key_body_len: u16 = 95 + key_data.len() as u16;
-
-        pkt.push(0x02); // EAPOL version 2
-        pkt.push(0x03); // Type: EAPOL-Key
-        pkt.extend_from_slice(&eapol_key_body_len.to_be_bytes()); // body length
-
-        // ── EAPOL-Key Descriptor ──
-        pkt.push(desc_type); // Key Descriptor Type
-
-        // Key Information (2 bytes, big-endian)
-        pkt.extend_from_slice(&key_infos[msg_idx as usize].to_be_bytes());
-
-        // Key Length (2 bytes)
-        pkt.extend_from_slice(&key_len.to_be_bytes());
-
-        // Replay Counter (8 bytes) — increments per message
-        pkt.extend_from_slice(&(msg_idx as u64 + 1).to_be_bytes());
-
-        // Key Nonce (32 bytes)
         match msg_idx {
-            0 | 2 => pkt.extend_from_slice(&anonce), // AP sends ANonce
-            1     => pkt.extend_from_slice(&snonce), // Client sends SNonce
-            _     => pkt.extend_from_slice(&[0u8; 32]), // Msg4: empty
+            0 | 2 => eapol.extend_from_slice(&anonce),
+            1     => eapol.extend_from_slice(&snonce),
+            _     => eapol.extend_from_slice(&[0u8; 32]),
         }
 
-        // Key IV (16 bytes) — zeros for WPA2
-        pkt.extend_from_slice(&[0u8; 16]);
+        eapol.extend_from_slice(&[0u8; 16]); // Key IV
+        eapol.extend_from_slice(&[0u8; 8]);  // Key RSC
+        eapol.extend_from_slice(&[0u8; 8]);  // Reserved
 
-        // Key RSC (8 bytes)
-        pkt.extend_from_slice(&[0u8; 8]);
+        let mic_offset = eapol.len();
+        eapol.extend_from_slice(&[0u8; 16]); // MIC placeholder
 
-        // Key ID / Reserved (8 bytes)
-        pkt.extend_from_slice(&[0u8; 8]);
+        eapol.extend_from_slice(&(key_data.len() as u16).to_be_bytes());
+        eapol.extend_from_slice(key_data);
 
-        // Key MIC (16 bytes) — synthetic (zero for msg1, hash-like for msg2-4)
-        if msg_idx == 0 {
-            pkt.extend_from_slice(&[0u8; 16]);
+        // Compute real MIC for M2, M3, M4
+        if msg_idx > 0 {
+            let mic = compute_mic(kck, &eapol);
+            eapol[mic_offset..mic_offset + 16].copy_from_slice(&mic);
+        }
+
+        // Build 802.11 Data frame + LLC/SNAP + EAPOL
+        let mut pkt = Vec::with_capacity(32 + eapol.len());
+
+        if ap_to_client[msg_idx as usize] {
+            // FromDS: Addr1=DA(client), Addr2=BSSID(AP), Addr3=SA(AP)
+            pkt.extend_from_slice(&[0x08, 0x02]); // FC: Data, FromDS
+            pkt.extend_from_slice(&[0x00, 0x00]); // Duration
+            pkt.extend_from_slice(&client_mac);    // Addr1
+            pkt.extend_from_slice(&ap_mac);        // Addr2
+            pkt.extend_from_slice(&ap_mac);        // Addr3
         } else {
-            let mut mic = [0u8; 16];
-            for i in 0..16 {
-                mic[i] = ap_mac[i % 6]
-                    .wrapping_add(client_mac[i % 6])
-                    .wrapping_mul(msg_idx.wrapping_add(i as u8).wrapping_add(0x3C));
-            }
-            pkt.extend_from_slice(&mic);
+            // ToDS: Addr1=BSSID(AP), Addr2=SA(client), Addr3=DA(AP)
+            pkt.extend_from_slice(&[0x08, 0x01]); // FC: Data, ToDS
+            pkt.extend_from_slice(&[0x00, 0x00]); // Duration
+            pkt.extend_from_slice(&ap_mac);        // Addr1
+            pkt.extend_from_slice(&client_mac);    // Addr2
+            pkt.extend_from_slice(&ap_mac);        // Addr3
         }
 
-        // Key Data Length (2 bytes)
-        pkt.extend_from_slice(&(key_data.len() as u16).to_be_bytes());
+        pkt.extend_from_slice(&[0x00, 0x00]); // Sequence Control
 
-        // Key Data (variable)
-        pkt.extend_from_slice(key_data);
+        // LLC/SNAP header (8 bytes)
+        pkt.extend_from_slice(&[0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00]); // LLC
+        pkt.extend_from_slice(&[0x88, 0x8E]);                          // EtherType: EAPOL
 
-        // ── PCAP Record Header (16 bytes) ──
-        let ts_sec = base_ts + msg_idx as u32;
-        let ts_usec = msg_idx as u32 * 250_000; // 250ms apart
-        let pkt_len = pkt.len() as u32;
+        pkt.extend_from_slice(&eapol);
 
-        buf.extend_from_slice(&ts_sec.to_le_bytes());
-        buf.extend_from_slice(&ts_usec.to_le_bytes());
-        buf.extend_from_slice(&pkt_len.to_le_bytes()); // incl_len
-        buf.extend_from_slice(&pkt_len.to_le_bytes()); // orig_len
-        buf.extend_from_slice(&pkt);
+        write_pcap_record(&mut buf, base_ts + 1 + msg_idx as u32, msg_idx as u32 * 250_000, &pkt);
     }
 
     buf
@@ -3717,6 +3796,7 @@ pub async fn netops_save_handshake_log(
     ssid: String,
     bssid: String,
     security: String,
+    passphrase: Option<String>,
 ) -> Result<String, String> {
     let downloads = dirs::download_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
@@ -3736,7 +3816,8 @@ pub async fn netops_save_handshake_log(
         .map_err(|e| format!("Failed to save txt: {}", e))?;
 
     // 2. Generate and save pcap
-    let pcap_data = build_handshake_pcap(&bssid, &security);
+    let psk = passphrase.unwrap_or_else(|| "testpassword".into());
+    let pcap_data = build_handshake_pcap(&bssid, &ssid, &psk, &security);
     let pcap_path = downloads.join(format!("{}.pcap", base_name));
     tokio::fs::write(&pcap_path, &pcap_data)
         .await
@@ -4028,8 +4109,119 @@ pub async fn netops_pcap_analyze(path: String) -> Result<PcapAnalysis, String> {
                     });
                 }
             }
+        } else if link_type == 105 && pkt_data.len() >= 24 {
+            // DLT_IEEE802_11
+            let fc0 = pkt_data[0];
+            let fc1 = pkt_data[1];
+            let frame_type = (fc0 >> 2) & 0x03;
+            let frame_subtype = (fc0 >> 4) & 0x0F;
+
+            match frame_type {
+                0 => {
+                    // Management frame
+                    let subtype_name = match frame_subtype {
+                        0 => "Association Request",
+                        1 => "Association Response",
+                        4 => "Probe Request",
+                        5 => "Probe Response",
+                        8 => "Beacon",
+                        10 => "Disassociation",
+                        11 => "Authentication",
+                        12 => "Deauthentication",
+                        _ => "Management",
+                    };
+                    let da = format_mac(&pkt_data[4..10]);
+                    let sa = format_mac(&pkt_data[10..16]);
+                    let mut info_str = subtype_name.to_string();
+                    // Extract SSID from beacon/probe
+                    if (frame_subtype == 8 || frame_subtype == 5) && pkt_data.len() > 36 {
+                        let mut tag_off = 36; // after fixed params
+                        while tag_off + 2 <= pkt_data.len() {
+                            let tag_id = pkt_data[tag_off];
+                            let tag_len = pkt_data[tag_off + 1] as usize;
+                            if tag_off + 2 + tag_len > pkt_data.len() { break; }
+                            if tag_id == 0 && tag_len > 0 {
+                                if let Ok(ssid_val) = std::str::from_utf8(&pkt_data[tag_off+2..tag_off+2+tag_len]) {
+                                    info_str = format!("{}, SSID={}", subtype_name, ssid_val);
+                                }
+                                break;
+                            }
+                            tag_off += 2 + tag_len;
+                        }
+                    }
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: sa, dst: da,
+                        protocol: "802.11".into(), length: incl_len as u32,
+                        info: info_str, is_eapol: false, hex_preview: hex,
+                    });
+                }
+                2 => {
+                    // Data frame
+                    let to_ds = fc1 & 0x01 != 0;
+                    let from_ds = fc1 & 0x02 != 0;
+                    let (src, dst) = match (to_ds, from_ds) {
+                        (false, true) => (format_mac(&pkt_data[16..22]), format_mac(&pkt_data[4..10])),
+                        (true, false) => (format_mac(&pkt_data[10..16]), format_mac(&pkt_data[16..22])),
+                        _ => (format_mac(&pkt_data[10..16]), format_mac(&pkt_data[4..10])),
+                    };
+
+                    let hdr_len = 24usize;
+                    // Check for LLC/SNAP + EAPOL
+                    if pkt_data.len() >= hdr_len + 8
+                        && pkt_data[hdr_len] == 0xAA && pkt_data[hdr_len+1] == 0xAA
+                        && pkt_data[hdr_len+6] == 0x88 && pkt_data[hdr_len+7] == 0x8E
+                    {
+                        eapol_count += 1;
+                        let eapol_start = hdr_len + 8;
+                        let mut info_str = "EAPOL".to_string();
+                        if pkt_data.len() >= eapol_start + 7 {
+                            let eapol_type = pkt_data[eapol_start + 1];
+                            if eapol_type == 0x03 && pkt_data.len() >= eapol_start + 7 {
+                                let key_info = u16::from_be_bytes([pkt_data[eapol_start + 5], pkt_data[eapol_start + 6]]);
+                                let has_ack = key_info & 0x0080 != 0;
+                                let has_mic = key_info & 0x0100 != 0;
+                                let has_install = key_info & 0x0040 != 0;
+                                let has_secure = key_info & 0x0200 != 0;
+                                let msg_num = if has_ack && !has_mic { 1 }
+                                    else if !has_ack && has_mic && !has_install { 2 }
+                                    else if has_ack && has_mic && has_install { 3 }
+                                    else if has_mic && has_secure && !has_ack { 4 }
+                                    else { 0 };
+                                if msg_num > 0 {
+                                    info_str = format!("EAPOL-Key Message {} (4-Way Handshake)", msg_num);
+                                } else {
+                                    info_str = format!("EAPOL-Key [Info: 0x{:04X}]", key_info);
+                                }
+                            }
+                        }
+                        packets.push(PcapPacket {
+                            index: idx, timestamp: relative_ts,
+                            src, dst,
+                            protocol: "EAPOL".into(), length: incl_len as u32,
+                            info: info_str, is_eapol: true, hex_preview: hex,
+                        });
+                    } else {
+                        packets.push(PcapPacket {
+                            index: idx, timestamp: relative_ts,
+                            src, dst,
+                            protocol: "802.11 Data".into(), length: incl_len as u32,
+                            info: "Data".into(), is_eapol: false, hex_preview: hex,
+                        });
+                    }
+                }
+                _ => {
+                    packets.push(PcapPacket {
+                        index: idx, timestamp: relative_ts,
+                        src: "—".into(), dst: "—".into(),
+                        protocol: "802.11".into(), length: incl_len as u32,
+                        info: format!("Type {} Subtype {}", frame_type, frame_subtype),
+                        is_eapol: false, hex_preview: hex,
+                    });
+                }
+            }
         } else {
-            // Non-Ethernet or too short
+            // Unknown link type or too short
             packets.push(PcapPacket {
                 index: idx, timestamp: relative_ts,
                 src: "—".into(), dst: "—".into(),
@@ -4052,5 +4244,191 @@ pub async fn netops_pcap_analyze(path: String) -> Result<PcapAnalysis, String> {
         eapol_count,
         duration_secs,
         parse_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ─── PSK Strength Audit ────────────────────────────────────────────────────
+
+const COMMON_WIFI_PASSWORDS: &str = "\
+password\n12345678\n123456789\n1234567890\nqwerty123\nadmin1234\npassword1\n\
+iloveyou\nsunshine1\nprincess1\nfootball1\ncharlie1\naccess14\n\
+welcome1\nmonkey12\ndragon12\nmaster12\nqwerty12\nlogin123\n\
+abc12345\nletmein1\ntrustno1\nshadow12\n1234abcd\n12341234\n\
+qwer1234\n11111111\n00000000\n88888888\n66666666\n12344321\n\
+password123\npassw0rd\np@ssw0rd\nP@ssword1\nPassword1\nwifi1234\n\
+internet\nhomewifi\nmywifi123\nwifipass\nwireless\nnetwork1\n\
+changeme\ndefault1\nadmin123\nroot1234\nsecret12\naccess12\n\
+test1234\nguest123\nuser1234\nhello123\nsuper123\nqwerty01\n\
+abcdef12\nabc12345\npass1234\npassword1234\n12345678a\n123456abc\n\
+a1234567\na12345678\naa123456\nab123456\nasd12345\nzxc12345\n\
+asdfgh12\nasdfghjk\nzxcvbnm1\nqwertyui\nq1w2e3r4\n1q2w3e4r\n\
+1qaz2wsx\nzaq12wsx\nqazwsx12\nwsxedc12\nedcrfv12\nrfvtgb12\n\
+tgbyhn12\nyhnujm12\nujmik123\nikol1234\nol12pl12\n1p2o3i4u\n\
+passpass\npassword!1\nPassword123\nletmein123\nwelcome123\n\
+computer1\nbaseball1\nsecurity1\nmustang1\nstarwars1\ntomorrow1\n\
+whatever1\nblink182\nrockyou1\nasshole1\npokemon1\nchester1\n\
+richard1\nmichael1\njennifer1\njessica1\nmichelle1\ndaniel12\n\
+matthew1\njordan23\nharley12\nthomas12\ncharlie1\nandrew12\n\
+joshua12\njoseph12\njackson1\nbuster12\n\
+samsung1\nsamsung123\niphone12\nhuawei12\nandroid1\nmobile12\n\
+MyWifi123\nmynet123\nhome1234\nnetgear1\nlinksys1\ncomcast1\n\
+spectrum1\nxfinity1\nfamily12\nkids1234\nlove1234\nbaby1234\n\
+honey123\nangel123\nflower12\nsummer12\nwinter12\nspring12\n\
+golden12\nsilver12\ndiamond1\ncrystal1\nphoenix1\nwarrior1\n\
+freedom1\nforever1\namerican1\ncountry1\nmusic123\ngamer123\n\
+";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PskAuditResult {
+    pub status: String,
+    pub found_key: Option<String>,
+    pub hash_count: u32,
+    pub wordlist_entries: u64,
+    pub duration_secs: f64,
+    pub pcap_file: String,
+    pub tool_output: String,
+    pub hcx_output: String,
+}
+
+#[tauri::command]
+pub async fn netops_psk_audit(
+    pcap_path: String,
+    wordlist_path: Option<String>,
+) -> Result<PskAuditResult, String> {
+    let start = Instant::now();
+
+    // Check hcxpcapngtool
+    let hcx_check = tokio::process::Command::new("which")
+        .arg("hcxpcapngtool")
+        .output()
+        .await;
+    if hcx_check.is_err() || !hcx_check.as_ref().unwrap().status.success() {
+        return Err("hcxpcapngtool not found. Install with: brew install hcxtools".into());
+    }
+
+    // Check hashcat
+    let hc_check = tokio::process::Command::new("which")
+        .arg("hashcat")
+        .output()
+        .await;
+    if hc_check.is_err() || !hc_check.as_ref().unwrap().status.success() {
+        return Err("hashcat not found. Install with: brew install hashcat".into());
+    }
+
+    // Temp directory
+    let tmp_dir = std::env::temp_dir().join(format!("flux_psk_{}", std::process::id()));
+    tokio::fs::create_dir_all(&tmp_dir).await.map_err(|e| e.to_string())?;
+
+    let hash_file = tmp_dir.join("capture.22000");
+    let cracked_file = tmp_dir.join("cracked.txt");
+
+    // Step 1: Convert pcap → .22000
+    let hcx_out = tokio::process::Command::new("hcxpcapngtool")
+        .arg("-o")
+        .arg(hash_file.to_str().unwrap())
+        .arg(&pcap_path)
+        .output()
+        .await
+        .map_err(|e| format!("hcxpcapngtool failed: {}", e))?;
+
+    let hcx_stderr = String::from_utf8_lossy(&hcx_out.stderr).to_string();
+    let hcx_stdout = String::from_utf8_lossy(&hcx_out.stdout).to_string();
+    let hcx_combined = format!("{}{}", hcx_stdout, hcx_stderr);
+
+    // Check if hash file was created with content
+    let hash_exists = tokio::fs::metadata(&hash_file).await.map(|m| m.len() > 0).unwrap_or(false);
+    if !hash_exists {
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        return Ok(PskAuditResult {
+            status: "no_handshake".into(),
+            found_key: None,
+            hash_count: 0,
+            wordlist_entries: 0,
+            duration_secs: start.elapsed().as_secs_f64(),
+            pcap_file: pcap_path,
+            tool_output: "No valid handshake hashes found in pcap file.".into(),
+            hcx_output: hcx_combined,
+        });
+    }
+
+    // Count hashes
+    let hash_content = tokio::fs::read_to_string(&hash_file).await.unwrap_or_default();
+    let hash_count = hash_content.lines().filter(|l| !l.is_empty()).count() as u32;
+
+    // Step 2: Prepare wordlist
+    let wl_path = if let Some(ref wp) = wordlist_path {
+        wp.clone()
+    } else {
+        let common_wl = tmp_dir.join("common_wifi.txt");
+        tokio::fs::write(&common_wl, COMMON_WIFI_PASSWORDS).await.map_err(|e| e.to_string())?;
+        common_wl.to_str().unwrap().to_string()
+    };
+
+    let wl_content = tokio::fs::read_to_string(&wl_path).await.unwrap_or_default();
+    let wordlist_entries = wl_content.lines().filter(|l| !l.is_empty()).count() as u64;
+
+    // Step 3: Run hashcat
+    let session_name = format!("flux_{}", std::process::id());
+    let hc_out = tokio::process::Command::new("hashcat")
+        .arg("-m").arg("22000")
+        .arg(hash_file.to_str().unwrap())
+        .arg(&wl_path)
+        .arg("--potfile-disable")
+        .arg("--quiet")
+        .arg(format!("--outfile={}", cracked_file.to_str().unwrap()))
+        .arg("--outfile-format=2")
+        .arg(format!("--session={}", session_name))
+        .arg("--force")
+        .output()
+        .await
+        .map_err(|e| format!("hashcat execution failed: {}", e))?;
+
+    let duration = start.elapsed().as_secs_f64();
+
+    let hc_stderr = String::from_utf8_lossy(&hc_out.stderr).to_string();
+    let hc_stdout = String::from_utf8_lossy(&hc_out.stdout).to_string();
+
+    // Step 4: Check results
+    let found_key = if cracked_file.exists() {
+        let content = tokio::fs::read_to_string(&cracked_file).await.unwrap_or_default();
+        content.lines().next().map(|l| l.trim().to_string()).filter(|s| !s.is_empty())
+    } else {
+        // Also check stdout for quiet mode output (hash:password format)
+        hc_stdout.lines().next()
+            .and_then(|l| l.split(':').last())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    let status = if found_key.is_some() {
+        "cracked"
+    } else if hc_out.status.code() == Some(1) {
+        "exhausted"
+    } else if !hc_out.status.success() && hc_out.status.code() != Some(1) {
+        "error"
+    } else {
+        "exhausted"
+    };
+
+    let tool_output = if status == "error" {
+        format!("hashcat error (exit {}): {}", hc_out.status.code().unwrap_or(-1), hc_stderr)
+    } else if status == "cracked" {
+        format!("PSK found after testing {} candidates in {:.2}s", wordlist_entries, duration)
+    } else {
+        format!("Tested {} candidates in {:.2}s — PSK not in wordlist", wordlist_entries, duration)
+    };
+
+    // Cleanup
+    let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+
+    Ok(PskAuditResult {
+        status: status.into(),
+        found_key,
+        hash_count,
+        wordlist_entries,
+        duration_secs: duration,
+        pcap_file: pcap_path,
+        tool_output,
+        hcx_output: hcx_combined,
     })
 }

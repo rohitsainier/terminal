@@ -464,6 +464,19 @@ export interface PcapAnalysis {
   parse_time_ms: number;
 }
 
+// ═══ PSK Audit types ═══
+
+export interface PskAuditResult {
+  status: string;
+  found_key: string | null;
+  hash_count: number;
+  wordlist_entries: number;
+  duration_secs: number;
+  pcap_file: string;
+  tool_output: string;
+  hcx_output: string;
+}
+
 // ═══ Discriminated union for results ═══
 
 export type ToolResult =

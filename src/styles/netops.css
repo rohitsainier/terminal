@@ -1197,6 +1197,169 @@
   overflow-x: auto;
 }
 
+/* ─── PSK Export Input ─── */
+.nops-psk-export-input {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--nops-border);
+  color: var(--nops-text);
+  font-size: 10px;
+  font-family: inherit;
+  padding: 4px 8px;
+  border-radius: 3px;
+  width: 140px;
+  outline: none;
+}
+.nops-psk-export-input:focus {
+  border-color: var(--nops-accent);
+}
+.nops-psk-export-input::placeholder {
+  color: var(--nops-text-dim);
+  font-size: 9px;
+}
+
+/* ─── PSK Strength Audit ─── */
+.nops-psk-audit-section {
+  margin-top: 12px;
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 4px;
+  padding: 10px;
+  background: rgba(0, 212, 255, 0.03);
+}
+.nops-psk-audit-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--nops-accent);
+}
+.nops-psk-audit-note {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--nops-text-dim);
+  letter-spacing: 0.5px;
+}
+.nops-psk-audit-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.nops-psk-audit-wl-path {
+  flex: 1;
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nops-psk-run-btn {
+  background: var(--nops-accent);
+  border: none;
+  color: #000;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 700;
+  padding: 6px 16px;
+  cursor: pointer;
+  border-radius: 3px;
+  letter-spacing: 1px;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.nops-psk-run-btn:hover {
+  opacity: 0.85;
+}
+.nops-psk-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.nops-psk-run-btn.loading {
+  animation: nops-pulse 1s ease-in-out infinite;
+}
+.nops-psk-audit-result {
+  padding: 10px;
+  border-radius: 4px;
+  margin-top: 6px;
+}
+.nops-psk-audit-result.weak {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+.nops-psk-audit-result.strong {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+.nops-psk-verdict {
+  margin-bottom: 8px;
+}
+.nops-psk-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 3px 10px;
+  border-radius: 3px;
+}
+.nops-psk-badge.weak {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+.nops-psk-badge.strong {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+.nops-psk-badge.warning {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+}
+.nops-psk-badge.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+.nops-psk-found-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.nops-psk-key-value {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.nops-psk-audit-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  margin-bottom: 6px;
+}
+.nops-psk-audit-output {
+  font-size: 10px;
+  color: var(--nops-text);
+  margin-top: 4px;
+}
+.nops-psk-details {
+  margin-top: 6px;
+  font-size: 10px;
+}
+.nops-psk-details summary {
+  cursor: pointer;
+  color: var(--nops-text-dim);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+.nops-psk-details summary:hover {
+  color: var(--nops-accent);
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 900px) {
   .nops-main {

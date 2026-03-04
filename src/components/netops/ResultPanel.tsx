@@ -1,7 +1,7 @@
 import { Show, For, Switch, Match, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
-import type { NetopsStore, NetopsTool } from "./types";
+import type { NetopsStore, NetopsTool, PskAuditResult } from "./types";
 
 interface Props {
   store: NetopsStore;
@@ -1137,6 +1137,7 @@ export default function ResultPanel(props: Props) {
                   const d = res() as { kind: "handshake"; data: import("./types").HandshakeResult };
                   const [saving, setSaving] = createSignal(false);
                   const [savedPath, setSavedPath] = createSignal("");
+                  const [exportPsk, setExportPsk] = createSignal("");
                   async function downloadLog() {
                     setSaving(true);
                     try {
@@ -1145,6 +1146,7 @@ export default function ResultPanel(props: Props) {
                         ssid: d.data.ssid,
                         bssid: d.data.bssid || "",
                         security: d.data.security_protocol || "",
+                        passphrase: exportPsk() || null,
                       });
                       setSavedPath(path);
                     } catch (e) {
@@ -1156,9 +1158,18 @@ export default function ResultPanel(props: Props) {
                     <div class="nops-output">
                       <div class="nops-result-header" style="display: flex; justify-content: space-between; align-items: center">
                         <span>WPA HANDSHAKE — {d.data.ssid} ({d.data.scan_time_ms}ms)</span>
-                        <button class="nops-download-log-btn" onClick={downloadLog} disabled={saving()}>
-                          {saving() ? "SAVING..." : "EXPORT (.txt / .pcap / .cap)"}
-                        </button>
+                        <div style="display: flex; align-items: center; gap: 6px">
+                          <input
+                            class="nops-psk-export-input"
+                            type="text"
+                            placeholder="PSK for valid pcap"
+                            value={exportPsk()}
+                            onInput={(e) => setExportPsk(e.currentTarget.value)}
+                          />
+                          <button class="nops-download-log-btn" onClick={downloadLog} disabled={saving()}>
+                            {saving() ? "SAVING..." : "EXPORT (.txt / .pcap / .cap)"}
+                          </button>
+                        </div>
                       </div>
                       <Show when={savedPath() !== ""}>
                         <div class="nops-log-saved">{savedPath().startsWith("Error") ? savedPath() : `Saved: ${savedPath()}`}</div>
@@ -1227,11 +1238,42 @@ export default function ResultPanel(props: Props) {
                 {(() => {
                   const d = res() as { kind: "pcapview"; data: import("./types").PcapAnalysis };
                   const [expandedPkt, setExpandedPkt] = createSignal<number | null>(null);
+                  const [auditWl, setAuditWl] = createSignal("");
+                  const [auditRunning, setAuditRunning] = createSignal(false);
+                  const [auditResult, setAuditResult] = createSignal<PskAuditResult | null>(null);
+                  const [auditError, setAuditError] = createSignal("");
                   const formatSize = (bytes: number) => {
                     if (bytes < 1024) return `${bytes} B`;
                     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
                     return `${(bytes / 1048576).toFixed(1)} MB`;
                   };
+
+                  async function browseWordlist() {
+                    const file = await dialogOpen({
+                      multiple: false,
+                      filters: [{ name: "Wordlist", extensions: ["txt", "lst", "dict", "wordlist"] }],
+                    });
+                    if (file) setAuditWl(file as string);
+                  }
+
+                  async function runPskAudit() {
+                    setAuditRunning(true);
+                    setAuditError("");
+                    setAuditResult(null);
+                    try {
+                      const pcapPath = props.store.target();
+                      const result = await invoke<PskAuditResult>("netops_psk_audit", {
+                        pcapPath,
+                        wordlistPath: auditWl() || null,
+                      });
+                      setAuditResult(result);
+                    } catch (e: unknown) {
+                      setAuditError(String(e));
+                    } finally {
+                      setAuditRunning(false);
+                    }
+                  }
+
                   return (
                     <div class="nops-output">
                       <div class="nops-result-header">PCAP ANALYSIS — {d.data.filename} ({d.data.parse_time_ms}ms)</div>
@@ -1280,6 +1322,80 @@ export default function ResultPanel(props: Props) {
                       </Show>
 
                       <div class="nops-result-summary">{d.data.packet_count} packets parsed{d.data.eapol_count > 0 ? `, ${d.data.eapol_count} EAPOL frames found` : ""}</div>
+
+                      {/* ── PSK Strength Audit ── */}
+                      <Show when={d.data.eapol_count > 0}>
+                        <div class="nops-psk-audit-section">
+                          <div class="nops-psk-audit-header">
+                            <span>PSK STRENGTH AUDIT</span>
+                            <span class="nops-psk-audit-note">Authorized assessment only</span>
+                          </div>
+                          <div class="nops-psk-audit-controls">
+                            <button class="nops-pcap-browse-btn" type="button" onClick={browseWordlist}>
+                              {auditWl() ? "CHANGE" : "WORDLIST"}
+                            </button>
+                            <span class="nops-psk-audit-wl-path">
+                              {auditWl() ? auditWl().split("/").pop() : "Built-in common passwords (~150)"}
+                            </span>
+                            <button
+                              class={`nops-psk-run-btn ${auditRunning() ? "loading" : ""}`}
+                              type="button"
+                              disabled={auditRunning()}
+                              onClick={runPskAudit}
+                            >
+                              {auditRunning() ? "AUDITING..." : "RUN AUDIT"}
+                            </button>
+                          </div>
+
+                          <Show when={auditError()}>
+                            <div class="nops-error">{auditError()}</div>
+                          </Show>
+
+                          <Show when={auditResult()}>
+                            {(() => {
+                              const ar = auditResult()!;
+                              return (
+                                <div class={`nops-psk-audit-result ${ar.status === "cracked" ? "weak" : ar.status === "exhausted" ? "strong" : ""}`}>
+                                  <div class="nops-psk-verdict">
+                                    <Show when={ar.status === "cracked"} fallback={
+                                      <Show when={ar.status === "exhausted"} fallback={
+                                        <Show when={ar.status === "no_handshake"} fallback={
+                                          <span class="nops-psk-badge error">ERROR</span>
+                                        }>
+                                          <span class="nops-psk-badge warning">NO HANDSHAKE</span>
+                                        </Show>
+                                      }>
+                                        <span class="nops-psk-badge strong">STRONG</span>
+                                      </Show>
+                                    }>
+                                      <span class="nops-psk-badge weak">WEAK — KEY FOUND</span>
+                                    </Show>
+                                  </div>
+                                  <Show when={ar.found_key}>
+                                    <div class="nops-psk-found-key">
+                                      <span class="nops-text-dim">Recovered PSK:</span>
+                                      <code class="nops-psk-key-value">{ar.found_key}</code>
+                                    </div>
+                                  </Show>
+                                  <div class="nops-psk-audit-stats">
+                                    <span>Hashes: {ar.hash_count}</span>
+                                    <span>Candidates: {ar.wordlist_entries.toLocaleString()}</span>
+                                    <span>Time: {ar.duration_secs.toFixed(2)}s</span>
+                                    <span>Status: {ar.status}</span>
+                                  </div>
+                                  <div class="nops-psk-audit-output">{ar.tool_output}</div>
+                                  <Show when={ar.hcx_output}>
+                                    <details class="nops-psk-details">
+                                      <summary>hcxpcapngtool output</summary>
+                                      <pre class="nops-pcap-hex">{ar.hcx_output}</pre>
+                                    </details>
+                                  </Show>
+                                </div>
+                              );
+                            })()}
+                          </Show>
+                        </div>
+                      </Show>
                     </div>
                   );
                 })()}

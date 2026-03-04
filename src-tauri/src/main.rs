@@ -163,6 +163,7 @@ fn main() {
             netops::netops_handshake_analyze,
             netops::netops_save_handshake_log,
             netops::netops_pcap_analyze,
+            netops::netops_psk_audit,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");
