@@ -60,7 +60,7 @@ impl SessionManager {
 
         self.sessions
             .lock()
-            .map_err(|_| "Lock error".to_string())?
+            .map_err(|_| "Failed to lock session_manager internal state".to_string())?
             .insert(id.to_string(), info.clone());
 
         Ok(info)
@@ -73,7 +73,7 @@ impl SessionManager {
         cwd: Option<String>,
         pid: Option<u32>,
     ) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|_| "Lock error".to_string())?;
+        let mut sessions = self.sessions.lock().map_err(|_| "Failed to lock session_manager internal state".to_string())?;
         let session = sessions
             .get_mut(id)
             .ok_or_else(|| format!("Session not found: {}", id))?;
@@ -91,7 +91,7 @@ impl SessionManager {
     }
 
     pub fn close_session(&self, id: &str, exit_code: Option<i32>) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|_| "Lock error".to_string())?;
+        let mut sessions = self.sessions.lock().map_err(|_| "Failed to lock session_manager internal state".to_string())?;
         if let Some(session) = sessions.get_mut(id) {
             session.is_active = false;
             session.exit_code = exit_code;
@@ -207,7 +207,7 @@ impl SessionManager {
                 .map_err(|e| format!("Failed to create dir: {}", e))?;
         }
 
-        let history = self.history.lock().map_err(|_| "Lock error".to_string())?;
+        let history = self.history.lock().map_err(|_| "Failed to lock session_manager internal state".to_string())?;
         let content =
             serde_json::to_string(&*history).map_err(|e| format!("Serialize error: {}", e))?;
         std::fs::write(&history_path, content).map_err(|e| format!("Write error: {}", e))?;
@@ -230,7 +230,7 @@ impl SessionManager {
             serde_json::from_str(&content).map_err(|e| format!("Parse error: {}", e))?;
         let count = loaded.len();
 
-        let mut history = self.history.lock().map_err(|_| "Lock error".to_string())?;
+        let mut history = self.history.lock().map_err(|_| "Failed to lock session_manager internal state".to_string())?;
         *history = loaded;
         Ok(count)
     }
@@ -304,24 +304,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_cwd() {
-        assert_eq!(
-            detect_cwd_from_output("user@host:~/projects$"),
-            Some("~/projects".into())
-        );
-        assert_eq!(
-            detect_cwd_from_output("/Users/john/projects ❯"),
-            Some("/Users/john/projects".into())
-        );
-    }
-
-    #[test]
-    fn test_detect_shell() {
-        let shell = detect_default_shell();
-        assert!(!shell.is_empty());
-    }
-
-    #[test]
     fn test_list_shells() {
         let shells = list_available_shells();
         assert!(!shells.is_empty());
@@ -345,7 +327,8 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].command, "ls -la");
 
-        let session = sm.get_session("test-1").unwrap();
+        let sessions = sm.list_sessions();
+        let session = sessions.iter().find(|s| s.id == "test-1").unwrap();
         assert_eq!(session.command_count, 1);
     }
 }

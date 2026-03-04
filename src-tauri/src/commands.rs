@@ -18,6 +18,43 @@ pub struct AppState {
     pub mcp_manager: Mutex<crate::mcp::MCPManager>,
 }
 
+// ─── Lock Helpers ────────────────────────────────
+
+fn lock_ai_engine(state: &AppState) -> Result<AIEngine, String> {
+    let guard = state
+        .ai_engine
+        .lock()
+        .map_err(|_| "Failed to lock ai_engine".to_string())?;
+    guard
+        .clone()
+        .ok_or_else(|| "AI not configured. Set up a provider in Settings.".to_string())
+}
+
+fn get_mcp_context(state: &AppState) -> Result<String, String> {
+    let manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
+    Ok(manager.get_tools_for_ai_context())
+}
+
+fn call_mcp_tool(
+    state: &AppState,
+    server: &str,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<crate::mcp::MCPToolResult, String> {
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
+    manager.call_tool(server, tool, arguments)
+}
+
+fn format_tool_result_text(result: &crate::mcp::MCPToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|c| c.text.as_ref())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 // ─── PTY Commands ────────────────────────────────
 
 #[tauri::command]
@@ -34,7 +71,7 @@ pub fn create_session(
         .create_session(id.clone(), rows, cols, cwd.clone(), app_handle)?;
 
     // Register in session manager for tracking
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     let _ = sm.register_session(&id, None);
     if let Some(c) = cwd {
         let _ = sm.update_session(&id, None, Some(c), None);
@@ -55,8 +92,7 @@ pub fn resize_session(state: State<AppState>, id: String, rows: u16, cols: u16) 
 #[tauri::command]
 pub fn close_session(state: State<AppState>, id: String) -> Result<(), String> {
     state.pty_manager.close(&id)?;
-    // Close in session manager and save history
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     let _ = sm.close_session(&id, None);
     let _ = sm.save_history();
     Ok(())
@@ -70,12 +106,7 @@ pub async fn ai_translate_command(
     query: String,
     cwd: String,
 ) -> Result<AIResponse, String> {
-    let engine = {
-        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard
-            .clone()
-            .ok_or("AI not configured. Set up Ollama or add API key in Settings.")?
-    };
+    let engine = lock_ai_engine(&state)?;
     let os = std::env::consts::OS;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
     engine.translate_to_command(&query, os, &shell, &cwd).await
@@ -86,10 +117,7 @@ pub async fn ai_explain_command(
     state: State<'_, AppState>,
     command: String,
 ) -> Result<String, String> {
-    let engine = {
-        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard.clone().ok_or("AI not configured")?
-    };
+    let engine = lock_ai_engine(&state)?;
     engine.explain_command(&command).await
 }
 
@@ -99,10 +127,7 @@ pub async fn ai_suggest_fix(
     command: String,
     error_output: String,
 ) -> Result<AIResponse, String> {
-    let engine = {
-        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard.clone().ok_or("AI not configured")?
-    };
+    let engine = lock_ai_engine(&state)?;
     engine.suggest_fix(&command, &error_output).await
 }
 
@@ -121,15 +146,15 @@ pub async fn list_openai_models(api_key: String) -> Result<Vec<String>, String> 
 
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
-    let config = state.config.lock().map_err(|_| "Lock error")?;
+    let config = state.config.lock().map_err(|_| "Failed to lock config")?;
     Ok(config.clone())
 }
 
 #[tauri::command]
 pub fn set_config(state: State<AppState>, config: AppConfig) -> Result<(), String> {
-    let mut current = state.config.lock().map_err(|_| "Lock error")?;
+    let mut current = state.config.lock().map_err(|_| "Failed to lock config")?;
     let ai = config.ai_provider.as_ref().map(|p| AIEngine::new(p.clone()));
-    *state.ai_engine.lock().map_err(|_| "Lock error")? = ai;
+    *state.ai_engine.lock().map_err(|_| "Failed to lock ai_engine")? = ai;
     *current = config;
     current.save()?;
     Ok(())
@@ -156,25 +181,25 @@ pub fn get_theme(name: String) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub fn list_snippets(state: State<AppState>) -> Result<Vec<crate::snippets::Snippet>, String> {
-    let manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     Ok(manager.list())
 }
 
 #[tauri::command]
 pub fn add_snippet(state: State<AppState>, snippet: crate::snippets::Snippet) -> Result<(), String> {
-    let mut manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     manager.add(snippet)
 }
 
 #[tauri::command]
 pub fn delete_snippet(state: State<AppState>, id: String) -> Result<(), String> {
-    let mut manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     manager.delete(&id)
 }
 
 #[tauri::command]
 pub fn run_snippet(state: State<AppState>, id: String, session_id: String) -> Result<(), String> {
-    let manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     let snippet = manager.get(&id).ok_or("Snippet not found")?;
     let command = format!("{}\n", snippet.command);
     state.pty_manager.write(&session_id, command.as_bytes())
@@ -182,25 +207,25 @@ pub fn run_snippet(state: State<AppState>, id: String, session_id: String) -> Re
 
 #[tauri::command]
 pub fn search_snippets(state: State<AppState>, query: String) -> Result<Vec<crate::snippets::Snippet>, String> {
-    let manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     Ok(manager.search(&query))
 }
 
 #[tauri::command]
 pub fn get_snippet_categories(state: State<AppState>) -> Result<Vec<String>, String> {
-    let manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     Ok(manager.get_categories())
 }
 
 #[tauri::command]
 pub fn import_snippets(state: State<AppState>, json_str: String) -> Result<usize, String> {
-    let mut manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     manager.import_from_json(&json_str)
 }
 
 #[tauri::command]
 pub fn export_snippets(state: State<AppState>) -> Result<String, String> {
-    let manager = state.snippet_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.snippet_manager.lock().map_err(|_| "Failed to lock snippet_manager")?;
     manager.export_to_json()
 }
 
@@ -208,25 +233,25 @@ pub fn export_snippets(state: State<AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn list_ssh_connections(state: State<AppState>) -> Result<Vec<SSHConnection>, String> {
-    let manager = state.ssh_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.ssh_manager.lock().map_err(|_| "Failed to lock ssh_manager")?;
     Ok(manager.list())
 }
 
 #[tauri::command]
 pub fn add_ssh_connection(state: State<AppState>, connection: SSHConnection) -> Result<(), String> {
-    let mut manager = state.ssh_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.ssh_manager.lock().map_err(|_| "Failed to lock ssh_manager")?;
     manager.add(connection)
 }
 
 #[tauri::command]
 pub fn delete_ssh_connection(state: State<AppState>, id: String) -> Result<(), String> {
-    let mut manager = state.ssh_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.ssh_manager.lock().map_err(|_| "Failed to lock ssh_manager")?;
     manager.delete(&id)
 }
 
 #[tauri::command]
 pub fn connect_ssh(state: State<AppState>, id: String, session_id: String) -> Result<(), String> {
-    let manager = state.ssh_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.ssh_manager.lock().map_err(|_| "Failed to lock ssh_manager")?;
     let ssh_command = manager.build_ssh_command(&id)?;
     let full_command = format!("{}\n", ssh_command);
     state.pty_manager.write(&session_id, full_command.as_bytes())
@@ -250,19 +275,19 @@ pub fn get_known_hosts() -> Result<Vec<String>, String> {
 pub fn list_sessions(
     state: State<AppState>,
 ) -> Result<Vec<crate::terminal::SessionInfo>, String> {
-    let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     Ok(manager.list_sessions())
 }
 
 #[tauri::command]
 pub fn save_history(state: State<AppState>) -> Result<(), String> {
-    let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     manager.save_history()
 }
 
 #[tauri::command]
 pub fn clear_history(state: State<AppState>) -> Result<(), String> {
-    let manager = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     manager.clear_history();
     manager.save_history()
 }
@@ -270,7 +295,7 @@ pub fn clear_history(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn add_history_entry(state: State<AppState>, entry: CommandHistoryEntry) -> Result<(), String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     sm.add_to_history(entry);
     Ok(())
 }
@@ -281,7 +306,7 @@ pub fn search_history(
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<CommandHistoryEntry>, String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     Ok(sm.search_history(&query, limit.unwrap_or(50)))
 }
 
@@ -290,7 +315,7 @@ pub fn recent_history(
     state: State<AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<CommandHistoryEntry>, String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     Ok(sm.recent_history(limit.unwrap_or(50)))
 }
 
@@ -299,7 +324,7 @@ pub fn unique_commands(
     state: State<AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<String>, String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     Ok(sm.unique_commands(limit.unwrap_or(50)))
 }
 
@@ -314,7 +339,7 @@ pub fn most_used_commands(
     state: State<AppState>,
     limit: Option<usize>,
 ) -> Result<Vec<CommandFrequency>, String> {
-    let sm = state.session_manager.lock().map_err(|_| "Lock error")?;
+    let sm = state.session_manager.lock().map_err(|_| "Failed to lock session_manager")?;
     Ok(sm
         .most_used_commands(limit.unwrap_or(20))
         .into_iter()
@@ -333,7 +358,7 @@ pub fn list_available_shells() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub fn mcp_get_config(state: State<AppState>) -> Result<crate::mcp::MCPConfig, String> {
-    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     Ok(manager.get_config())
 }
 
@@ -342,7 +367,7 @@ pub fn mcp_save_config(
     state: State<AppState>,
     config: crate::mcp::MCPConfig,
 ) -> Result<(), String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.set_config(config);
     manager.save_config()
 }
@@ -353,31 +378,31 @@ pub fn mcp_add_server(
     name: String,
     config: crate::mcp::MCPServerConfig,
 ) -> Result<(), String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.add_server(name, config)
 }
 
 #[tauri::command]
 pub fn mcp_remove_server(state: State<AppState>, name: String) -> Result<(), String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.remove_server(&name)
 }
 
 #[tauri::command]
 pub fn mcp_start_server(state: State<AppState>, name: String) -> Result<(), String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.start_server(&name)
 }
 
 #[tauri::command]
 pub fn mcp_stop_server(state: State<AppState>, name: String) -> Result<(), String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.stop_server(&name)
 }
 
 #[tauri::command]
 pub fn mcp_restart_server(state: State<AppState>, name: String) -> Result<(), String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.restart_server(&name)
 }
 
@@ -385,7 +410,7 @@ pub fn mcp_restart_server(state: State<AppState>, name: String) -> Result<(), St
 pub fn mcp_list_servers(
     state: State<AppState>,
 ) -> Result<Vec<crate::mcp::MCPServerInfo>, String> {
-    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     Ok(manager.list_server_statuses())
 }
 
@@ -394,7 +419,7 @@ pub fn mcp_list_tools(
     state: State<AppState>,
     server: Option<String>,
 ) -> Result<Vec<(String, crate::mcp::MCPTool)>, String> {
-    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
 
     if let Some(name) = server {
         let tools = manager.list_server_tools(&name)?;
@@ -411,13 +436,13 @@ pub fn mcp_call_tool(
     tool: String,
     arguments: serde_json::Value,
 ) -> Result<crate::mcp::MCPToolResult, String> {
-    let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let mut manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     manager.call_tool(&server, &tool, arguments)
 }
 
 #[tauri::command]
 pub fn mcp_get_ai_context(state: State<AppState>) -> Result<String, String> {
-    let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
+    let manager = state.mcp_manager.lock().map_err(|_| "Failed to lock mcp_manager")?;
     Ok(manager.get_tools_for_ai_context())
 }
 
@@ -428,23 +453,15 @@ pub async fn mcp_ai_chat(
     state: State<'_, AppState>,
     messages: Vec<crate::ai::ChatMessage>,
 ) -> Result<serde_json::Value, String> {
-    let engine = {
-        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard
-            .clone()
-            .ok_or("AI not configured. Set up a provider in Settings.")?
-    };
+    let engine = lock_ai_engine(&state)?;
 
-    let mcp_context = {
-        let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
-        manager.get_tools_for_ai_context()
-    };
+    let mcp_context = get_mcp_context(&state)?;
 
     let os = std::env::consts::OS;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
 
     let response = engine
-        .chat_with_tools(&messages, &mcp_context, os, &shell)
+        .chat_with_tools(&messages, &mcp_context, os, &shell, None)
         .await?;
 
     match response {
@@ -460,20 +477,11 @@ pub async fn mcp_ai_chat(
             arguments,
         } => {
             // Try to execute the tool
-            let tool_result = {
-                let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
-                manager.call_tool(&server, &tool, arguments.clone())
-            };
+            let tool_result = call_mcp_tool(&state, &server, &tool, arguments.clone());
 
             match tool_result {
                 Ok(result) => {
-                    let result_text = result
-                        .content
-                        .iter()
-                        .filter_map(|c| c.text.as_ref())
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    let result_text = format_tool_result_text(&result);
 
                     Ok(serde_json::json!({
                         "type": "tool_call",
@@ -505,7 +513,7 @@ pub async fn mcp_ai_chat(
 
                     // Retry with AI
                     match engine
-                        .chat_with_tools(&retry_messages, &mcp_context, os, &shell)
+                        .chat_with_tools(&retry_messages, &mcp_context, os, &shell, None)
                         .await
                     {
                         Ok(retry_response) => match retry_response {
@@ -515,27 +523,11 @@ pub async fn mcp_ai_chat(
                                 arguments: retry_args,
                             } => {
                                 // Second attempt
-                                let retry_result = {
-                                    let mut manager = state
-                                        .mcp_manager
-                                        .lock()
-                                        .map_err(|_| "Lock error")?;
-                                    manager.call_tool(
-                                        &retry_server,
-                                        &retry_tool,
-                                        retry_args.clone(),
-                                    )
-                                };
+                                let retry_result = call_mcp_tool(&state, &retry_server, &retry_tool, retry_args.clone());
 
                                 match retry_result {
                                     Ok(result) => {
-                                        let result_text = result
-                                            .content
-                                            .iter()
-                                            .filter_map(|c| c.text.as_ref())
-                                            .cloned()
-                                            .collect::<Vec<_>>()
-                                            .join("\n");
+                                        let result_text = format_tool_result_text(&result);
 
                                         Ok(serde_json::json!({
                                             "type": "tool_call",
@@ -549,13 +541,7 @@ pub async fn mcp_ai_chat(
                                     }
                                     Err(retry_err) => {
                                         // Both attempts failed — return error with available tools
-                                        let available = {
-                                            let manager = state
-                                                .mcp_manager
-                                                .lock()
-                                                .map_err(|_| "Lock error")?;
-                                            manager.get_tools_for_ai_context()
-                                        };
+                                        let available = get_mcp_context(&state)?;
 
                                         Ok(serde_json::json!({
                                             "type": "tool_error",
@@ -599,15 +585,9 @@ pub async fn mcp_ai_followup(
     messages: Vec<crate::ai::ChatMessage>,
     tool_result: String,
 ) -> Result<String, String> {
-    let engine = {
-        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard.clone().ok_or("AI not configured")?
-    };
+    let engine = lock_ai_engine(&state)?;
 
-    let mcp_context = {
-        let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
-        manager.get_tools_for_ai_context()
-    };
+    let mcp_context = get_mcp_context(&state)?;
 
     // Add tool result to conversation and ask AI to summarize
     let mut all_messages = messages;
@@ -624,7 +604,7 @@ pub async fn mcp_ai_followup(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
 
     let response = engine
-        .chat_with_tools(&all_messages, &mcp_context, os, &shell)
+        .chat_with_tools(&all_messages, &mcp_context, os, &shell, None)
         .await?;
 
     match response {
@@ -636,29 +616,40 @@ pub async fn mcp_ai_followup(
     }
 }
 
+/// Generate a task execution plan from user's request.
+/// Returns structured plan with title and steps.
+#[tauri::command]
+pub async fn mcp_ai_plan(
+    state: State<'_, AppState>,
+    messages: Vec<crate::ai::ChatMessage>,
+) -> Result<serde_json::Value, String> {
+    let engine = lock_ai_engine(&state)?;
+    let mcp_context = get_mcp_context(&state)?;
+    let os = std::env::consts::OS;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+
+    engine.plan_task(&messages, &mcp_context, os, &shell).await
+}
+
 /// One step of the agentic loop: AI either responds or calls a tool.
 /// If tool_call, backend auto-executes it and returns the result.
 /// Frontend loops until it gets type="message".
+/// Optional plan_step provides context about which plan step is being executed.
 #[tauri::command]
 pub async fn mcp_ai_step(
     state: State<'_, AppState>,
     messages: Vec<crate::ai::ChatMessage>,
+    plan_step: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let engine = {
-        let guard = state.ai_engine.lock().map_err(|_| "Lock error")?;
-        guard.clone().ok_or("AI not configured. Set up a provider in Settings.")?
-    };
+    let engine = lock_ai_engine(&state)?;
 
-    let mcp_context = {
-        let manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
-        manager.get_tools_for_ai_context()
-    };
+    let mcp_context = get_mcp_context(&state)?;
 
     let os = std::env::consts::OS;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
 
     let response = engine
-        .chat_with_tools(&messages, &mcp_context, os, &shell)
+        .chat_with_tools(&messages, &mcp_context, os, &shell, plan_step.as_deref())
         .await?;
 
     match response {
@@ -667,18 +658,11 @@ pub async fn mcp_ai_step(
             "content": msg
         })),
         crate::ai::ChatResponse::ToolCall { server, tool, arguments } => {
-            let tool_result = {
-                let mut manager = state.mcp_manager.lock().map_err(|_| "Lock error")?;
-                manager.call_tool(&server, &tool, arguments.clone())
-            };
+            let tool_result = call_mcp_tool(&state, &server, &tool, arguments.clone());
 
             match tool_result {
                 Ok(result) => {
-                    let text = result.content.iter()
-                        .filter_map(|c| c.text.as_ref())
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    let text = format_tool_result_text(&result);
 
                     Ok(serde_json::json!({
                         "type": "tool_call",

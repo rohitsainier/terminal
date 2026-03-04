@@ -1,11 +1,12 @@
 import { createSignal, Show, For, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import type { PlanStep, TaskPlan } from "../types";
 
 // ─── Types ───────────────────────────────
 
 interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "tool" | "error" | "system";
+  role: "user" | "assistant" | "tool" | "error" | "system" | "plan";
   content: string;
   tool?: {
     server: string;
@@ -14,6 +15,7 @@ interface ChatMessage {
     result?: string;
     isError?: boolean;
   };
+  plan?: TaskPlan;
   timestamp: number;
 }
 
@@ -47,6 +49,14 @@ export default function MCPChat(props: Props) {
   const [servers, setServers] = createSignal<MCPServerInfo[]>([]);
   const [aborted, setAborted] = createSignal(false);
 
+  // Plan state
+  const [plan, setPlan] = createSignal<TaskPlan | null>(null);
+  const [planSteps, setPlanSteps] = createSignal<PlanStep[]>([]);
+  const [currentPlanStep, setCurrentPlanStep] = createSignal(0);
+  const [planMode, setPlanMode] = createSignal<
+    "none" | "planning" | "reviewing" | "executing" | "done"
+  >("none");
+
   let messagesEnd: HTMLDivElement | undefined;
   let inputRef: HTMLTextAreaElement | undefined;
 
@@ -62,8 +72,8 @@ export default function MCPChat(props: Props) {
     push({
       role: "system",
       content: connected.length
-        ? `Ready — ${connected.length} MCP server${connected.length > 1 ? "s" : ""}, ${tools} tools. Describe any task and I'll handle it step by step.`
-        : "No MCP servers connected. Start one from the MCP panel (⌘M).",
+        ? `Ready — ${connected.length} MCP server${connected.length > 1 ? "s" : ""}, ${tools} tools. Describe any task and I'll plan it step by step.`
+        : "No MCP servers connected. Start one from the MCP panel (\u2318M).",
     });
   });
 
@@ -83,14 +93,10 @@ export default function MCPChat(props: Props) {
     return msg;
   }
 
-  function scroll() {
-    setTimeout(() => messagesEnd?.scrollIntoView({ behavior: "smooth" }), 40);
-  }
-
   // Build the AI conversation from our visible messages
   function toAIMessages(): AIMessage[] {
     return messages()
-      .filter((m) => m.role !== "system")
+      .filter((m) => m.role !== "system" && m.role !== "plan")
       .flatMap((m): AIMessage[] => {
         if (m.role === "user") {
           return [{ role: "user", content: m.content }];
@@ -99,7 +105,6 @@ export default function MCPChat(props: Props) {
           return [{ role: "assistant", content: m.content }];
         }
         if (m.role === "tool" && m.tool) {
-          // The AI needs to know what it did and what came back
           return [
             {
               role: "assistant",
@@ -120,7 +125,7 @@ export default function MCPChat(props: Props) {
       });
   }
 
-  // ─── Core Agent Loop ───────────────────
+  // ─── Plan + Execute Flow ───────────────
 
   async function send() {
     const text = input().trim();
@@ -133,43 +138,190 @@ export default function MCPChat(props: Props) {
     setBusy(true);
 
     try {
-      await agentLoop();
+      // Check if we have connected servers with tools
+      const hasTools = servers().some((s) => s.connected && s.tools_count > 0);
+
+      if (hasTools) {
+        // Phase 1: Generate plan
+        setPlanMode("planning");
+        setStatus("Planning task...");
+
+        const conversation = toAIMessages();
+        let planResult: any;
+
+        try {
+          planResult = await invoke("mcp_ai_plan", { messages: conversation });
+        } catch (err: any) {
+          push({ role: "error", content: `Planning failed: ${err}` });
+          setPlanMode("none");
+          return;
+        }
+
+        if (aborted()) {
+          push({ role: "system", content: "Planning cancelled." });
+          setPlanMode("none");
+          return;
+        }
+
+        // Parse the plan
+        const rawPlan = planResult?.plan;
+        if (!rawPlan || !rawPlan.steps || rawPlan.steps.length === 0) {
+          // No valid plan — fall back to direct execution
+          setPlanMode("none");
+          await agentLoop(null);
+          return;
+        }
+
+        const taskPlan: TaskPlan = {
+          title: rawPlan.title || "Task",
+          steps: rawPlan.steps.map((s: any) => ({
+            step: s.step || 0,
+            description: s.description || "",
+            tool: s.tool || null,
+            status: "pending" as const,
+          })),
+        };
+
+        // Check if it's a simple single-step with no tool → skip plan UI
+        if (taskPlan.steps.length === 1 && !taskPlan.steps[0].tool) {
+          setPlanMode("none");
+          await agentLoop(null);
+          return;
+        }
+
+        setPlan(taskPlan);
+        setPlanSteps(taskPlan.steps);
+        setCurrentPlanStep(0);
+        setPlanMode("reviewing");
+        setStatus("");
+
+        // Show plan as a message
+        push({ role: "plan", content: "", plan: taskPlan });
+      } else {
+        // No MCP tools — just run the agent directly
+        setPlanMode("none");
+        await agentLoop(null);
+      }
+    } catch (err: any) {
+      push({ role: "error", content: String(err) });
+    } finally {
+      if (planMode() !== "reviewing") {
+        setBusy(false);
+        setStatus("");
+        setToolSteps(0);
+        inputRef?.focus();
+      } else {
+        // Still reviewing — keep busy false so user can interact
+        setBusy(false);
+        setStatus("");
+      }
+    }
+  }
+
+  async function executePlan() {
+    const currentPlan = plan();
+    if (!currentPlan) return;
+
+    setBusy(true);
+    setPlanMode("executing");
+    setAborted(false);
+
+    try {
+      await agentLoop(currentPlan);
     } catch (err: any) {
       push({ role: "error", content: String(err) });
     } finally {
       setBusy(false);
       setStatus("");
       setToolSteps(0);
+      setPlanMode("done");
+      setPlan(null);
       inputRef?.focus();
     }
   }
 
-  async function agentLoop() {
+  function cancelPlan() {
+    setPlan(null);
+    setPlanSteps([]);
+    setPlanMode("none");
+    setBusy(false);
+    setStatus("");
+    push({ role: "system", content: "Plan cancelled." });
+    inputRef?.focus();
+  }
+
+  // ─── Core Agent Loop ───────────────────
+
+  async function agentLoop(taskPlan: TaskPlan | null) {
     let steps = 0;
     let consecutiveErrors = 0;
+    let planStepIndex = 0;
+
+    // If we have a plan, update the first step to running
+    if (taskPlan) {
+      updatePlanStepStatus(0, "running");
+    }
 
     while (steps < STEP_LIMIT) {
       if (aborted()) {
+        // Mark remaining plan steps as skipped
+        if (taskPlan) {
+          for (let i = planStepIndex; i < taskPlan.steps.length; i++) {
+            updatePlanStepStatus(i, "skipped");
+          }
+        }
         push({ role: "system", content: `Stopped after ${steps} tool call${steps !== 1 ? "s" : ""}.` });
         return;
       }
 
-      setStatus(steps === 0 ? "Thinking..." : `Thinking... (${steps} tool call${steps !== 1 ? "s" : ""} so far)`);
+      const planStepDesc = taskPlan && planStepIndex < taskPlan.steps.length
+        ? `Step ${planStepIndex + 1}/${taskPlan.steps.length}: ${taskPlan.steps[planStepIndex].description}`
+        : null;
 
-      // Call AI with full conversation
+      setStatus(
+        planStepDesc
+          ? `${planStepDesc}${steps > 0 ? ` (${steps} tool calls)` : ""}`
+          : steps === 0
+            ? "Thinking..."
+            : `Thinking... (${steps} tool call${steps !== 1 ? "s" : ""} so far)`
+      );
+
+      if (taskPlan) {
+        setCurrentPlanStep(planStepIndex);
+      }
+
+      // Call AI with full conversation + plan context
       const conversation = toAIMessages();
       let response: any;
 
       try {
-        response = await invoke("mcp_ai_step", { messages: conversation });
+        response = await invoke("mcp_ai_step", {
+          messages: conversation,
+          planStep: planStepDesc,
+        });
       } catch (err: any) {
         push({ role: "error", content: `AI error: ${err}` });
+        if (taskPlan) updatePlanStepStatus(planStepIndex, "error");
         return;
       }
 
       // ── AI sent a final message → display and stop ──
       if (response.type === "message") {
         push({ role: "assistant", content: response.content });
+
+        if (taskPlan) {
+          // Mark current step as completed
+          updatePlanStepStatus(planStepIndex, "completed");
+
+          // Move to next plan step
+          planStepIndex++;
+          if (planStepIndex < taskPlan.steps.length) {
+            // More steps remain — continue the loop
+            updatePlanStepStatus(planStepIndex, "running");
+            continue;
+          }
+          // All steps done
+        }
         return;
       }
 
@@ -178,7 +330,11 @@ export default function MCPChat(props: Props) {
         steps++;
         consecutiveErrors = 0;
         setToolSteps(steps);
-        setStatus(`Running: ${response.tool}`);
+        setStatus(
+          planStepDesc
+            ? `${planStepDesc} — Running: ${response.tool}`
+            : `Running: ${response.tool}`
+        );
 
         push({
           role: "tool",
@@ -195,8 +351,6 @@ export default function MCPChat(props: Props) {
         if (response.is_error) {
           consecutiveErrors++;
         }
-
-        // Loop continues — AI will see the tool result next iteration
         continue;
       }
 
@@ -219,13 +373,13 @@ export default function MCPChat(props: Props) {
         });
 
         if (consecutiveErrors >= 3) {
+          if (taskPlan) updatePlanStepStatus(planStepIndex, "error");
           push({
             role: "system",
             content: "Too many consecutive errors — stopping to avoid an infinite loop.",
           });
           return;
         }
-
         continue;
       }
 
@@ -235,6 +389,13 @@ export default function MCPChat(props: Props) {
     }
 
     // Hit the safety limit
+    if (taskPlan) {
+      for (let i = planStepIndex; i < taskPlan.steps.length; i++) {
+        if (planSteps()[i]?.status === "running") updatePlanStepStatus(i, "error");
+        else if (planSteps()[i]?.status === "pending") updatePlanStepStatus(i, "skipped");
+      }
+    }
+
     push({
       role: "system",
       content: `Reached the ${STEP_LIMIT}-step safety limit. Asking AI for a summary of progress...`,
@@ -247,11 +408,20 @@ export default function MCPChat(props: Props) {
         role: "user",
         content: "You've reached the step limit. Summarize what was completed and what remains.",
       });
-      const summary = (await invoke("mcp_ai_step", { messages: conv })) as any;
+      const summary = (await invoke("mcp_ai_step", {
+        messages: conv,
+        planStep: null,
+      })) as any;
       if (summary.type === "message") {
         push({ role: "assistant", content: summary.content });
       }
     } catch (_) {}
+  }
+
+  function updatePlanStepStatus(index: number, status: PlanStep["status"]) {
+    setPlanSteps((prev) =>
+      prev.map((s, i) => (i === index ? { ...s, status } : s))
+    );
   }
 
   // ─── Event Handlers ───────────────────
@@ -264,6 +434,9 @@ export default function MCPChat(props: Props) {
   }
 
   function clearChat() {
+    setPlan(null);
+    setPlanSteps([]);
+    setPlanMode("none");
     setMessages([]);
     refreshServers().then(() => {
       const c = servers().filter((s) => s.connected);
@@ -345,6 +518,50 @@ export default function MCPChat(props: Props) {
                       {msg.content}
                     </div>
                     <span class="mcpc-time">{formatTime(msg.timestamp)}</span>
+                  </div>
+                </Show>
+
+                {/* Plan */}
+                <Show when={msg.role === "plan" && msg.plan}>
+                  <div class="mcpc-plan-card">
+                    <div class="mcpc-plan-header">
+                      <span class="mcpc-plan-icon">📋</span>
+                      <span class="mcpc-plan-title">{msg.plan!.title}</span>
+                    </div>
+                    <div class="mcpc-plan-steps">
+                      <For each={planSteps()}>
+                        {(step, i) => (
+                          <div
+                            class={`mcpc-plan-step ${step.status}`}
+                            classList={{
+                              "mcpc-plan-step-active": i() === currentPlanStep() && planMode() === "executing",
+                            }}
+                          >
+                            <span class="mcpc-plan-step-indicator">
+                              {step.status === "completed" ? "✓" :
+                               step.status === "running" ? "▶" :
+                               step.status === "error" ? "✗" :
+                               step.status === "skipped" ? "–" :
+                               String(step.step)}
+                            </span>
+                            <span class="mcpc-plan-step-desc">{step.description}</span>
+                            <Show when={step.tool}>
+                              <span class="mcpc-plan-step-tool">{step.tool}</span>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                    <Show when={planMode() === "reviewing"}>
+                      <div class="mcpc-plan-actions">
+                        <button class="mcpc-plan-execute" onClick={executePlan}>
+                          ▶ Execute Plan
+                        </button>
+                        <button class="mcpc-plan-cancel" onClick={cancelPlan}>
+                          Cancel
+                        </button>
+                      </div>
+                    </Show>
                   </div>
                 </Show>
 
@@ -446,14 +663,20 @@ export default function MCPChat(props: Props) {
             value={input()}
             onInput={(e) => setInput(e.currentTarget.value)}
             onKeyDown={onKeyDown}
-            placeholder={busy() ? "Working..." : "Describe a task…"}
+            placeholder={
+              busy()
+                ? "Working..."
+                : planMode() === "reviewing"
+                  ? "Review the plan above, then Execute or Cancel"
+                  : "Describe a task…"
+            }
             rows={1}
-            disabled={busy()}
+            disabled={busy() || planMode() === "reviewing"}
           />
           <button
             class="mcpc-send"
             onClick={() => send()}
-            disabled={busy() || !input().trim()}
+            disabled={busy() || !input().trim() || planMode() === "reviewing"}
           >
             {busy() ? "…" : "↑"}
           </button>

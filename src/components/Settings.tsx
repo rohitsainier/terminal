@@ -1,15 +1,16 @@
 import { createSignal, createEffect, onMount, Show, For } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import type { AppConfig, AIProvider } from "../types";
 
 interface Props {
   onClose: () => void;
   onThemeChange: (themeName: string) => void;
-  currentConfig: any;
+  currentConfig: AppConfig | null;
 }
 
 export default function Settings(props: Props) {
   const [activeTab, setActiveTab] = createSignal("appearance");
-  const [config, setConfig] = createSignal<any>(props.currentConfig || {});
+  const [config, setConfig] = createSignal<AppConfig | null>(props.currentConfig || null);
   const [saved, setSaved] = createSignal(false);
 
   // Appearance
@@ -18,7 +19,7 @@ export default function Settings(props: Props) {
   const [fontFamily, setFontFamily] = createSignal(
     config()?.font_family || "JetBrains Mono"
   );
-  const [cursorStyle, setCursorStyle] = createSignal(
+  const [cursorStyle, setCursorStyle] = createSignal<"block" | "beam" | "underline">(
     config()?.cursor_style || "block"
   );
   const [cursorBlink, setCursorBlink] = createSignal(
@@ -147,7 +148,7 @@ export default function Settings(props: Props) {
   }
 
   async function saveConfig() {
-    let aiProvider: any = null;
+    let aiProvider: AIProvider | null = null;
     if (aiType() === "ollama") {
       aiProvider = {
         Ollama: { model: ollamaModel(), base_url: ollamaUrl() },
@@ -179,6 +180,7 @@ export default function Settings(props: Props) {
         matrix_rain_opacity: matrixOpacity(),
         particles_on_keystroke: particles(),
         screen_flicker: config()?.effects?.screen_flicker ?? false,
+        hologram: config()?.effects?.hologram ?? false,
       },
       ai_provider: aiProvider,
       default_shell: config()?.default_shell || null,
@@ -330,7 +332,7 @@ export default function Settings(props: Props) {
               <div class="settings-row">
                 <label>Style</label>
                 <div class="settings-button-group">
-                  {["block", "beam", "underline"].map((style) => (
+                  {(["block", "beam", "underline"] as const).map((style) => (
                     <button
                       class={`settings-btn-option ${cursorStyle() === style ? "active" : ""}`}
                       onClick={() => setCursorStyle(style)}

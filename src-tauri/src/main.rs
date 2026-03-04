@@ -106,9 +106,10 @@ fn main() {
             commands::mcp_list_tools,
             commands::mcp_call_tool,
             commands::mcp_get_ai_context,
-            // MCP + AI Chat 
+            // MCP + AI Chat
             commands::mcp_ai_chat,
             commands::mcp_ai_followup,
+            commands::mcp_ai_plan,
             commands::mcp_ai_step,
 
              // ═══ Monitor — all from monitor module ═══

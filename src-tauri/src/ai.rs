@@ -444,13 +444,80 @@ Suggest the corrected command. Respond in JSON ONLY (no markdown):
             .ok_or_else(|| "No content in Anthropic response".to_string())
     }
 
+    /// Generate a task execution plan from a user request.
+    /// Returns structured JSON with title and steps.
+    pub async fn plan_task(
+        &self,
+        messages: &[ChatMessage],
+        mcp_tools_context: &str,
+        os: &str,
+        shell: &str,
+    ) -> Result<serde_json::Value, String> {
+        let system_prompt = format!(
+            r#"You are a task planner with access to MCP tools.
+
+OS: {os}
+Shell: {shell}
+
+{mcp_tools_context}
+
+Your job is to analyze the user's request and create an execution plan.
+Break the task into clear, sequential steps. Each step should be a single action.
+
+You MUST respond with this exact JSON format. No markdown, no extra text:
+{{"plan": {{"title": "Short descriptive title", "steps": [{{"step": 1, "description": "What this step does", "tool": "tool_name_or_null"}}, {{"step": 2, "description": "...", "tool": "..."}}]}}}}
+
+Rules:
+- Keep the title short (under 60 chars)
+- Each step description should be clear and actionable
+- Set "tool" to the exact MCP tool name that will be used, or null if no tool needed
+- Order steps logically — later steps may depend on earlier results
+- For simple questions that need no tools, return a single step with tool: null
+- Include 2-10 steps maximum. Be practical, not granular."#,
+            os = os, shell = shell, mcp_tools_context = mcp_tools_context
+        );
+
+        let mut prompt_parts: Vec<String> = Vec::new();
+        for m in messages {
+            match m.role.as_str() {
+                "user" => prompt_parts.push(format!("User: {}", m.content)),
+                "assistant" => prompt_parts.push(format!("Assistant: {}", m.content)),
+                other => prompt_parts.push(format!("{}: {}", other, m.content)),
+            }
+        }
+        let user_prompt = prompt_parts.join("\n\n");
+
+        let response_text = self.call_provider(&system_prompt, &user_prompt).await?;
+        let cleaned = extract_json_from_text(&response_text);
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+            if value.get("plan").is_some() {
+                return Ok(value);
+            }
+        }
+
+        // Fallback: single-step plan
+        let user_text = messages.last().map(|m| m.content.as_str()).unwrap_or("Complete task");
+        Ok(serde_json::json!({
+            "plan": {
+                "title": user_text.chars().take(60).collect::<String>(),
+                "steps": [{"step": 1, "description": user_text, "tool": null}]
+            }
+        }))
+    }
+
     pub async fn chat_with_tools(
         &self,
         messages: &[ChatMessage],
         mcp_tools_context: &str,
         os: &str,
         shell: &str,
+        plan_context: Option<&str>,
     ) -> Result<ChatResponse, String> {
+        let plan_section = plan_context
+            .map(|p| format!("\n\nCURRENT PLAN STEP:\n{}\nFocus on completing THIS step. When done, respond with a message summarizing the result.", p))
+            .unwrap_or_default();
+
         let system_prompt = format!(
             r#"You are an AI assistant with access to MCP tools.
 
@@ -471,8 +538,8 @@ Rules:
 - Use EXACT tool names from the list (e.g. "create_frame" not "figma/create_frame")
 - For multi-step tasks: call ONE tool per response. You will see the result and can call another.
 - Only send a "message" when you are truly done or have nothing more to do with tools.
-- If a tool errors, try to fix the issue or explain what happened."#,
-            os = os, shell = shell, mcp_tools_context = mcp_tools_context
+- If a tool errors, try to fix the issue or explain what happened.{plan_section}"#,
+            os = os, shell = shell, mcp_tools_context = mcp_tools_context, plan_section = plan_section
         );
 
         // Build a single prompt from all messages
