@@ -44,7 +44,19 @@ src/                        # Frontend (SolidJS + TypeScript)
   hooks/                    # SolidJS hooks (useTheme, useTerminal, useAI)
   effects/                  # Visual effects (CRT, Glow, MatrixRain, Particles, Hologram)
   themes/                   # Theme JSON files + ThemeEngine
-  styles/                   # Global CSS (global.css, terminal.css, effects.css, monitor.css)
+    netops/                 # NETOPS Dashboard (network operations tools)
+      index.ts              # Barrel export
+      types.ts              # Interfaces, NetopsTool union, NetopsStore type
+      useNetopsData.ts      # Signals, runTool(), history management
+      TopBar.tsx            # Top bar (logo, LIVE badge, UTC clock)
+      ToolPanel.tsx         # Left panel (12 tool rows with icons)
+      ResultPanel.tsx       # Center panel (input bar + result renderers per tool)
+      InfoPanel.tsx         # Right panel (tool help + scan history)
+      NetopsDashboard.tsx   # Orchestrator (keyboard, layout)
+  hooks/                    # SolidJS hooks (useTheme, useTerminal, useAI)
+  effects/                  # Visual effects (CRT, Glow, MatrixRain, Particles, Hologram)
+  themes/                   # Theme JSON files + ThemeEngine
+  styles/                   # Global CSS (global.css, terminal.css, effects.css, monitor.css, netops.css)
 src-tauri/                  # Rust backend
   src/main.rs               # Tauri app setup
   src/commands.rs            # Tauri IPC commands (~1500 lines)
@@ -56,6 +68,7 @@ src-tauri/                  # Rust backend
   src/ssh.rs                 # SSH connections
   src/mcp.rs                 # Model Context Protocol
   src/monitor.rs             # Monitor API commands (ISS, weather, quakes, crypto, flights, net throughput, speedtest)
+  src/netops.rs              # NETOPS commands (ping, port scan, DNS, whois, WiFi, HTTP headers, SSL, geoIP, ARP, subnet calc, reverse DNS, traceroute)
 ```
 
 ## Code Conventions

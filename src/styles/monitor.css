@@ -3,21 +3,21 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
-  --fcmd-bg:             #0a0a0a;
-  --fcmd-bg-panel:       rgba(14, 14, 14, 0.95);
-  --fcmd-bg-hover:       rgba(20, 184, 166, 0.06);
-  --fcmd-bg-selected:    rgba(20, 184, 166, 0.1);
-  --fcmd-surface:        rgba(18, 18, 18, 0.6);
+  --fcmd-bg:             #0a0a0f;
+  --fcmd-bg-panel:       rgba(10, 10, 15, 0.95);
+  --fcmd-bg-hover:       rgba(0, 212, 255, 0.06);
+  --fcmd-bg-selected:    rgba(0, 212, 255, 0.1);
+  --fcmd-surface:        rgba(12, 12, 18, 0.6);
 
-  --fcmd-text:           #9ca3af;
-  --fcmd-text-bright:    #e5e7eb;
-  --fcmd-text-white:     #f3f4f6;
-  --fcmd-text-dim:       rgba(156, 163, 175, 0.4);
+  --fcmd-text:           rgba(200, 220, 240, 0.9);
+  --fcmd-text-bright:    #e8f0ff;
+  --fcmd-text-white:     #f0f4ff;
+  --fcmd-text-dim:       rgba(150, 170, 200, 0.4);
 
-  --fcmd-cyan:           #14b8a6;
-  --fcmd-cyan-dim:       rgba(20, 184, 166, 0.25);
-  --fcmd-green:          #10b981;
-  --fcmd-green-dim:      rgba(16, 185, 129, 0.2);
+  --fcmd-cyan:           #00d4ff;
+  --fcmd-cyan-dim:       rgba(0, 212, 255, 0.25);
+  --fcmd-green:          #22c55e;
+  --fcmd-green-dim:      rgba(34, 197, 94, 0.2);
   --fcmd-red:            #ef4444;
   --fcmd-red-dim:        rgba(239, 68, 68, 0.25);
   --fcmd-amber:          #f59e0b;
@@ -27,9 +27,9 @@
   --fcmd-orange:         #f97316;
   --fcmd-purple:         #a78bfa;
 
-  --fcmd-border:         rgba(255, 255, 255, 0.06);
-  --fcmd-border-bright:  rgba(20, 184, 166, 0.15);
-  --fcmd-border-focus:   rgba(20, 184, 166, 0.4);
+  --fcmd-border:         rgba(0, 212, 255, 0.08);
+  --fcmd-border-bright:  rgba(0, 212, 255, 0.2);
+  --fcmd-border-focus:   rgba(0, 212, 255, 0.4);
 
   --fcmd-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --fcmd-font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
@@ -221,7 +221,7 @@
 
 .fcmd-mode-tab.active {
   color: var(--mode-color, var(--fcmd-cyan));
-  background: rgba(20, 184, 166, 0.06);
+  background: rgba(0, 212, 255, 0.06);
   border-color: color-mix(in srgb, var(--mode-color, var(--fcmd-cyan)) 25%, transparent);
 }
 
@@ -299,7 +299,7 @@
 }
 .fcmd-net-monitor.active {
   opacity: 0.85;
-  border-color: rgba(0, 255, 65, 0.2);
+  border-color: rgba(0, 212, 255, 0.2);
 }
 .fcmd-net-label {
   color: var(--fcmd-text);
@@ -465,8 +465,8 @@
 }
 .fcmd-panel-restore:hover {
   opacity: 1;
-  background: rgba(0, 255, 65, 0.1);
-  border-color: rgba(0, 255, 65, 0.3);
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.3);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -625,8 +625,8 @@
   font-weight: 600;
   letter-spacing: 0.5px;
   color: var(--fcmd-cyan);
-  background: rgba(20, 184, 166, 0.06);
-  border: 1px solid rgba(20, 184, 166, 0.15);
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid rgba(0, 212, 255, 0.15);
   border-radius: 6px;
   cursor: pointer;
   transition: all var(--fcmd-transition);
@@ -634,8 +634,8 @@
 }
 
 .fcmd-btn:hover {
-  background: rgba(20, 184, 166, 0.12);
-  border-color: rgba(20, 184, 166, 0.3);
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.3);
 }
 
 .fcmd-btn:active { transform: scale(0.98); }
@@ -938,16 +938,16 @@
   justify-content: center;
   font-size: 18px;
   background: rgba(10, 10, 10, 0.85);
-  border: 1px solid rgba(20, 184, 166, 0.25);
+  border: 1px solid rgba(0, 212, 255, 0.25);
   border-radius: 50%;
   cursor: pointer;
   backdrop-filter: blur(8px);
   transition: all var(--fcmd-transition);
 }
 .fcmd-mode-selector-btn:hover {
-  background: rgba(20, 184, 166, 0.12);
-  border-color: rgba(20, 184, 166, 0.5);
-  box-shadow: 0 0 16px rgba(20, 184, 166, 0.2);
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.2);
   transform: scale(1.1);
 }
 
@@ -956,7 +956,7 @@
   bottom: 48px; left: 0;
   min-width: 160px;
   background: rgba(14, 14, 14, 0.96);
-  border: 1px solid rgba(20, 184, 166, 0.15);
+  border: 1px solid rgba(0, 212, 255, 0.15);
   border-radius: var(--fcmd-radius);
   overflow: hidden;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
@@ -981,12 +981,12 @@
   letter-spacing: 0.3px;
 }
 .fcmd-mode-menu-item:hover {
-  background: rgba(20, 184, 166, 0.08);
+  background: rgba(0, 212, 255, 0.08);
   color: var(--fcmd-text-bright);
 }
 .fcmd-mode-menu-item.active {
   color: var(--fcmd-cyan);
-  background: rgba(20, 184, 166, 0.06);
+  background: rgba(0, 212, 255, 0.06);
 }
 .fcmd-mode-menu-item + .fcmd-mode-menu-item {
   border-top: 1px solid rgba(255, 255, 255, 0.04);
@@ -1084,7 +1084,7 @@
   position: absolute;
   width: 32px;
   height: 32px;
-  border: 2px solid rgba(20, 184, 166, 0.35);
+  border: 2px solid rgba(0, 212, 255, 0.35);
   border-radius: 50%;
   top: 50%;
   left: 50%;
@@ -1096,7 +1096,7 @@
 .fcmd-iss-icon {
   font-size: 22px;
   color: var(--fcmd-cyan);
-  filter: drop-shadow(0 0 8px rgba(20, 184, 166, 0.5));
+  filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.5));
   animation: fcmd-glow-pulse 1.5s ease-in-out infinite;
   position: relative;
   z-index: 2;
@@ -1111,7 +1111,7 @@
   background: rgba(10, 10, 10, 0.88);
   padding: 2px 8px;
   border-radius: 4px;
-  border: 1px solid rgba(20, 184, 166, 0.25);
+  border: 1px solid rgba(0, 212, 255, 0.25);
   position: relative;
   z-index: 2;
 }
@@ -1450,7 +1450,7 @@
   z-index: 9;
   width: 380px;
   background: rgba(10, 10, 10, 0.96);
-  border: 1px solid rgba(20, 184, 166, 0.2);
+  border: 1px solid rgba(0, 212, 255, 0.2);
   border-radius: var(--fcmd-radius);
   overflow: hidden;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -1467,8 +1467,8 @@
   font-weight: 600;
   letter-spacing: 0.5px;
   color: var(--fcmd-cyan);
-  background: rgba(20, 184, 166, 0.04);
-  border-bottom: 1px solid rgba(20, 184, 166, 0.1);
+  background: rgba(0, 212, 255, 0.04);
+  border-bottom: 1px solid rgba(0, 212, 255, 0.1);
 }
 
 .fcmd-floating-stream-actions {
@@ -1485,9 +1485,9 @@
   justify-content: center;
   font-family: var(--fcmd-font);
   font-size: 10px;
-  color: rgba(20, 184, 166, 0.4);
+  color: rgba(0, 212, 255, 0.4);
   background: transparent;
-  border: 1px solid rgba(20, 184, 166, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.12);
   border-radius: 4px;
   cursor: pointer;
   transition: all var(--fcmd-transition);
@@ -1523,7 +1523,7 @@
   justify-content: center;
   color: var(--fcmd-cyan);
   background: rgba(10, 10, 10, 0.8);
-  border: 1px solid rgba(20, 184, 166, 0.2);
+  border: 1px solid rgba(0, 212, 255, 0.2);
   border-radius: 50%;
   cursor: pointer;
   backdrop-filter: blur(8px);
@@ -1531,9 +1531,9 @@
   animation: fcmd-fadeIn 0.3s ease-out;
 }
 .fcmd-stream-toggle-icon:hover {
-  background: rgba(20, 184, 166, 0.12);
-  border-color: rgba(20, 184, 166, 0.5);
-  box-shadow: 0 0 16px rgba(20, 184, 166, 0.2);
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.2);
   transform: scale(1.1);
 }
 .fcmd-stream-toggle-icon:active {
@@ -1570,7 +1570,7 @@
 
 .fcmd-stream-tab.active {
   color: var(--fcmd-text-white);
-  background: rgba(20, 184, 166, 0.06);
+  background: rgba(0, 212, 255, 0.06);
   border-color: var(--fcmd-cyan-dim);
 }
 
@@ -1873,7 +1873,7 @@
   .fcmd-overlay, .fcmd-floating-cam { animation: none !important; }
 }
 
-.fcmd-dashboard *::selection { background: rgba(20, 184, 166, 0.2); color: #fff; }
+.fcmd-dashboard *::selection { background: rgba(0, 212, 255, 0.2); color: #fff; }
 .fcmd-dashboard *:focus-visible { outline: 1px solid var(--fcmd-border-focus); outline-offset: 1px; }
 .fcmd-dashboard *:focus:not(:focus-visible) { outline: none; }
 
