@@ -48,6 +48,7 @@ pub struct NewsItem {
     pub title: String,
     pub source: String,
     pub timestamp: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +210,34 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     Some(xml[content_start..content_start + end_pos].to_string())
 }
 
+/// Extract link from an RSS/Atom item.
+/// RSS: `<link>https://...</link>`
+/// Atom: `<link href="https://..." .../>` or `<link href="https://..."></link>`
+fn extract_item_link(item_xml: &str) -> String {
+    // Try Atom-style href attribute first
+    if let Some(link_start) = item_xml.find("<link") {
+        let rest = &item_xml[link_start..];
+        if let Some(href_pos) = rest.find("href=") {
+            let after_href = &rest[href_pos + 5..];
+            let quote = after_href.chars().next().unwrap_or('"');
+            if quote == '"' || quote == '\'' {
+                let inner = &after_href[1..];
+                if let Some(end) = inner.find(quote) {
+                    let url = inner[..end].trim().to_string();
+                    if url.starts_with("http") {
+                        return url;
+                    }
+                }
+            }
+        }
+    }
+    // Fall back to RSS-style <link>text</link>
+    extract_xml_tag(item_xml, "link")
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with("http"))
+        .unwrap_or_default()
+}
+
 fn clean_html(s: &str) -> String {
     let mut out = s.to_string();
     // Strip CDATA wrappers
@@ -289,11 +318,14 @@ async fn fetch_rss_feed(
             pub_date.trim().to_string()
         };
 
+        let url = extract_item_link(item_xml);
+
         if !title.is_empty() && title.len() > 5 {
             items.push(NewsItem {
                 title,
                 source: source.to_string(),
                 timestamp,
+                url,
             });
         }
 

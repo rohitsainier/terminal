@@ -14,6 +14,7 @@ import {
   batch,
 } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-shell";
 import {
   twoline2satrec,
   propagate,
@@ -37,6 +38,7 @@ interface NewsItem {
   title: string;
   source: string;
   timestamp: string;
+  url: string;
 }
 interface Activity {
   lat: number;
@@ -114,9 +116,9 @@ const MODE_CONFIG: Record<
   { icon: string; label: string; key: string; color: string }
 > = {
   INTEL: { icon: "📡", label: "INTEL", key: "1", color: "#00ff41" },
-  CYBER: { icon: "⚠", label: "CYBER", key: "2", color: "#ff4444" },
+  CYBER: { icon: "🔒", label: "CYBER", key: "2", color: "#ff4444" },
   SAT: { icon: "🛰", label: "SAT", key: "3", color: "#4488ff" },
-  FLIGHTS: { icon: "✈", label: "FLIGHTS", key: "4", color: "#00d4ff" },
+  FLIGHTS: { icon: "🛫", label: "FLIGHTS", key: "4", color: "#00d4ff" },
   CAMS: { icon: "📷", label: "CAMS", key: "5", color: "#ffaa44" },
 };
 
@@ -338,6 +340,8 @@ export default function MonitorDashboard(props: Props) {
   const [globeReady, setGlobeReady] = createSignal(false);
   const [streamMuted, setStreamMuted] = createSignal(true);
   const [activeStream, setActiveStream] = createSignal(0);
+  const [showStream, setShowStream] = createSignal(false);
+  const [showModeMenu, setShowModeMenu] = createSignal(false);
 
   // ─── Signals: Data ────────────────────
   const [iss, setISS] = createSignal<ISSPos | null>(null);
@@ -398,12 +402,15 @@ export default function MonitorDashboard(props: Props) {
 
     // Keyboard
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-      if (e.key === "1") switchMode("INTEL");
-      if (e.key === "2") switchMode("CYBER");
-      if (e.key === "3") switchMode("SAT");
-      if (e.key === "4") switchMode("FLIGHTS");
-      if (e.key === "5") switchMode("CAMS");
+      if (e.key === "Escape") {
+        if (showModeMenu()) { setShowModeMenu(false); return; }
+        props.onClose();
+      }
+      if (e.key === "1") { switchMode("INTEL"); setShowModeMenu(false); }
+      if (e.key === "2") { switchMode("CYBER"); setShowModeMenu(false); }
+      if (e.key === "3") { switchMode("SAT"); setShowModeMenu(false); }
+      if (e.key === "4") { switchMode("FLIGHTS"); setShowModeMenu(false); }
+      if (e.key === "5") { switchMode("CAMS"); setShowModeMenu(false); }
       if (e.key === "m" || e.key === "M") setStreamMuted((m) => !m);
     };
     window.addEventListener("keydown", onKey);
@@ -1300,24 +1307,6 @@ export default function MonitorDashboard(props: Props) {
             </span>
           </div>
 
-          {/* Mode Tabs */}
-          <nav class="fcmd-mode-tabs">
-            <For each={Object.entries(MODE_CONFIG)}>
-              {([key, cfg]) => (
-                <button
-                  class={`fcmd-mode-tab ${mode() === key ? "active" : ""}`}
-                  onClick={() => switchMode(key as DashboardMode)}
-                  style={{ "--mode-color": cfg.color }}
-                  title={`${cfg.label} (${cfg.key})`}
-                >
-                  <span class="fcmd-mode-icon">{cfg.icon}</span>
-                  <span class="fcmd-mode-label">{cfg.label}</span>
-                  <span class="fcmd-mode-key">{cfg.key}</span>
-                </button>
-              )}
-            </For>
-          </nav>
-
           <div class="fcmd-topbar-section">
             <div class="fcmd-clocks">
               {[
@@ -1560,7 +1549,7 @@ export default function MonitorDashboard(props: Props) {
           </aside>
 
           {/* ─── CENTER: 3D GLOBE ──────────────────────────────── */}
-          <div class="fcmd-globe-wrap">
+          <div class="fcmd-globe-wrap" onClick={() => showModeMenu() && setShowModeMenu(false)}>
             <div ref={globeContainerRef!} class="fcmd-globe-container" />
 
             {/* Loading overlay */}
@@ -1585,6 +1574,37 @@ export default function MonitorDashboard(props: Props) {
               </Show>
               <Show when={mode() === "CYBER"}>
                 <span class="fcmd-dim" style={{ color: "#ff4444" }}>THREAT MONITORING ACTIVE</span>
+              </Show>
+            </div>
+
+            {/* Mode selector — bottom-left of globe */}
+            <div class="fcmd-mode-selector" onClick={(e) => e.stopPropagation()}>
+              <button
+                class="fcmd-mode-selector-btn"
+                onClick={() => setShowModeMenu((v) => !v)}
+                title="Switch mode"
+              >
+                <span>{MODE_CONFIG[mode()].icon}</span>
+              </button>
+              <Show when={showModeMenu()}>
+                <div class="fcmd-mode-menu">
+                  <For each={Object.entries(MODE_CONFIG)}>
+                    {([key, cfg]) => (
+                      <button
+                        class={`fcmd-mode-menu-item ${mode() === key ? "active" : ""}`}
+                        onClick={() => {
+                          switchMode(key as DashboardMode);
+                          setShowModeMenu(false);
+                        }}
+                        style={{ "--mode-color": cfg.color }}
+                      >
+                        <span class="fcmd-mode-menu-icon">{cfg.icon}</span>
+                        <span class="fcmd-mode-menu-label">{cfg.label}</span>
+                        <span class="fcmd-mode-menu-key">{cfg.key}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
               </Show>
             </div>
 
@@ -1631,21 +1651,21 @@ export default function MonitorDashboard(props: Props) {
                 </div>
               </div>
             </Show>
-          </div>
 
-          {/* ─── RIGHT PANEL ───────────────────────────────────── */}
-          <aside class="fcmd-panel-col fcmd-right">
-
-            {/* INTEL/CYBER: Live News Stream */}
-            <Show when={mode() === "INTEL" || mode() === "CYBER"}>
-              <section class="fcmd-panel fcmd-stream-panel">
-                <h3 class="fcmd-panel-hdr">
-                  📺 LIVE INTEL
-                  <span class="fcmd-mute-btn" onClick={() => setStreamMuted((m) => !m)} title="Toggle audio (M)">
-                    {streamMuted() ? "🔇" : "🔊"}
+            {/* Floating Live News Stream (bottom-right of globe) */}
+            <Show when={showStream()}>
+              <div class="fcmd-floating-stream">
+                <div class="fcmd-floating-stream-header">
+                  <span class="fcmd-live-dot" />
+                  <span>LIVE — {LIVE_STREAMS[activeStream()].label}</span>
+                  <span class="fcmd-floating-stream-actions">
+                    <span class="fcmd-mute-btn" onClick={() => setStreamMuted((m) => !m)} title="Toggle audio (M)">
+                      {streamMuted() ? "🔇" : "🔊"}
+                    </span>
+                    <button class="fcmd-floating-stream-close" onClick={() => setShowStream(false)}>✕</button>
                   </span>
-                </h3>
-                <div class="fcmd-stream-tabs">
+                </div>
+                <div class="fcmd-floating-stream-tabs">
                   <For each={LIVE_STREAMS}>
                     {(s, i) => (
                       <button
@@ -1658,7 +1678,7 @@ export default function MonitorDashboard(props: Props) {
                     )}
                   </For>
                 </div>
-                <div class="fcmd-stream-viewport">
+                <div class="fcmd-floating-stream-viewport">
                   <iframe
                     src={streamUrl()}
                     title={LIVE_STREAMS[activeStream()].label}
@@ -1666,45 +1686,28 @@ export default function MonitorDashboard(props: Props) {
                     allowfullscreen
                     class="fcmd-stream-iframe"
                   />
-                  <div class="fcmd-stream-label">
-                    <span class="fcmd-live-dot" />
-                    {LIVE_STREAMS[activeStream()].label}
-                  </div>
                 </div>
-              </section>
+              </div>
             </Show>
 
-            {/* CAMS mode: Large webcam player on right panel */}
-            <Show when={mode() === "CAMS"}>
-              <section class="fcmd-panel fcmd-stream-panel">
-                <h3 class="fcmd-panel-hdr">📷 WEBCAM FEED</h3>
-                <Show when={activeWebcam()} fallback={
-                  <div class="fcmd-dim" style={{ padding: "20px", "text-align": "center" }}>
-                    Click a camera on the globe<br />or select from the list
-                  </div>
-                }>
-                  <div class="fcmd-stream-viewport" style={{ "aspect-ratio": "16/9" }}>
-                    <iframe
-                      src={webcamUrl()}
-                      title={activeWebcam()!.label}
-                      allow="accelerometer; autoplay; encrypted-media; gyroscope"
-                      allowfullscreen
-                      class="fcmd-stream-iframe"
-                    />
-                    <div class="fcmd-stream-label">
-                      <span class="fcmd-live-dot" />
-                      {activeWebcam()!.city} — {activeWebcam()!.label}
-                    </div>
-                  </div>
-                  <div style={{ padding: "6px" }}>
-                    <div class="fcmd-kv"><span>CITY</span><span>{activeWebcam()!.city}</span></div>
-                    <div class="fcmd-kv"><span>COUNTRY</span><span>{activeWebcam()!.country}</span></div>
-                    <div class="fcmd-kv"><span>LAT</span><span>{activeWebcam()!.lat.toFixed(3)}°</span></div>
-                    <div class="fcmd-kv"><span>LON</span><span>{activeWebcam()!.lng.toFixed(3)}°</span></div>
-                  </div>
-                </Show>
-              </section>
+            {/* Stream toggle icon (bottom-right of globe) */}
+            <Show when={!showStream()}>
+              <button
+                class="fcmd-stream-toggle-icon"
+                onClick={() => setShowStream(true)}
+                title="Open live news stream"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="7" width="20" height="15" rx="2" ry="2" />
+                  <polyline points="17 2 12 7 7 2" />
+                </svg>
+              </button>
             </Show>
+          </div>
+
+          {/* ─── RIGHT PANEL ───────────────────────────────────── */}
+          <aside class="fcmd-panel-col fcmd-right">
+
 
             {/* SAT mode: right panel info */}
             <Show when={mode() === "SAT"}>
@@ -1759,11 +1762,20 @@ export default function MonitorDashboard(props: Props) {
               <div class="fcmd-news-list">
                 <For each={news()}>
                   {(item, i) => (
-                    <div class="fcmd-news-item">
+                    <div
+                      class={`fcmd-news-item${item.url ? " fcmd-news-clickable" : ""}`}
+                      onClick={() => { if (item.url) open(item.url); }}
+                      title={item.url || undefined}
+                    >
                       <span class="fcmd-news-idx">{String(i() + 1).padStart(2, "0")}</span>
                       <div class="fcmd-news-body">
                         <div class="fcmd-news-title">{item.title}</div>
-                        <div class="fcmd-news-meta">{item.source} · {item.timestamp}</div>
+                        <div class="fcmd-news-meta">
+                          {item.source} · {item.timestamp}
+                          <Show when={!!item.url}>
+                            <span class="fcmd-news-link">↗</span>
+                          </Show>
+                        </div>
                       </div>
                     </div>
                   )}
