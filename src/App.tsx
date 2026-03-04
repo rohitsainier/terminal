@@ -17,7 +17,7 @@ import { useTheme } from "./hooks/useTheme";
 import ShortcutHelp from "./components/ShortcutHelp";
 import MCPPanel from "./components/MCPPanel";
 import MCPChat from "./components/MCPChat";
-import MonitorDashboard from "./components/MonitorDashboard";
+import MonitorDashboard from "./components/monitor";
 import type { AppConfig, Tab } from "./types";
 import "./styles/global.css";
 import "./styles/terminal.css";
