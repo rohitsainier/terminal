@@ -28,6 +28,19 @@ There are no test or lint commands configured.
 ```
 src/                        # Frontend (SolidJS + TypeScript)
   components/               # UI components (Terminal, AIBar, Settings, Sidebar, etc.)
+    monitor/                # Monitor Dashboard (refactored into sub-modules)
+      index.ts              # Barrel export
+      types.ts              # Interfaces + MonitorStore type
+      constants.ts          # MODE_CONFIG, cities, streams, webcams, sat groups
+      utils.ts              # Pure helpers (TLE propagation, colors, threat gen)
+      useMonitorData.ts     # Signals, fetch functions, derived helpers
+      globeManager.ts       # Globe init/destroy, mode configs, markers, effects
+      TopBar.tsx            # Top bar (logo, clocks, packet counter)
+      LeftPanel.tsx         # Left panel (system info, mode-specific lists)
+      RightPanel.tsx        # Right panel (mode summaries, news feed)
+      GlobeOverlays.tsx     # HUD, mode menu, stream/webcam players
+      BottomTicker.tsx      # Crypto ticker + scrolling news
+      MonitorDashboard.tsx  # Orchestrator (timers, globe init, layout)
   hooks/                    # SolidJS hooks (useTheme, useTerminal, useAI)
   effects/                  # Visual effects (CRT, Glow, MatrixRain, Particles, Hologram)
   themes/                   # Theme JSON files + ThemeEngine
@@ -42,7 +55,7 @@ src-tauri/                  # Rust backend
   src/snippets.rs            # Snippet storage
   src/ssh.rs                 # SSH connections
   src/mcp.rs                 # Model Context Protocol
-  src/monitor.rs             # System monitoring
+  src/monitor.rs             # Monitor API commands (ISS, weather, quakes, crypto, flights, etc.)
 ```
 
 ## Code Conventions
@@ -74,3 +87,4 @@ src-tauri/                  # Rust backend
 - **AI Providers:** Ollama, OpenAI, Anthropic — configurable in Settings
 - **Themes:** 6 JSON theme files loaded by ThemeEngine
 - **Config:** Stored in OS config directory via `dirs` crate, hot-reloadable
+- **Monitor Dashboard:** 7 modes (INTEL, CYBER, SAT, FLIGHTS, CAMS, WEATHER, QUAKE) with 3D globe (globe.gl). State managed via `useMonitorData` hook returning a `MonitorStore` object passed as props. Globe logic is imperative (not JSX) in `globeManager.ts`. Rust backend uses `OnceLock<Mutex<Option<CacheEntry<T>>>>` caching pattern with TTL. Free APIs: Open-Meteo (weather), USGS (earthquakes), CoinGecko (crypto), OpenSky (flights), CelesTrak (satellites)
