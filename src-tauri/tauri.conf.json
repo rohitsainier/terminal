@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://unpkg.com https://cdn.jsdelivr.net data: blob:; connect-src 'self' https:; frame-src https://www.youtube.com https://www.youtube-nocookie.com; media-src https://www.youtube.com; worker-src 'self' blob:",
       "dangerousDisableAssetCspModification": true
     }
   },

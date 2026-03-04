@@ -6,6 +6,7 @@ mod pty;
 mod snippets;
 mod ssh;
 mod terminal;
+mod monitor;
 
 use ai::AIEngine;
 use commands::AppState;
@@ -109,6 +110,15 @@ fn main() {
             commands::mcp_ai_chat,
             commands::mcp_ai_followup,
             commands::mcp_ai_step,
+
+             // ═══ Monitor — all from monitor module ═══
+            monitor::monitor_fetch_tle,
+            monitor::monitor_flights,
+            monitor::monitor_iss_position,
+            monitor::monitor_news,
+            monitor::monitor_system_stats,
+            monitor::monitor_public_ip,
+            monitor::monitor_activity,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");
