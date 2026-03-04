@@ -1219,3 +1219,179 @@ pub async fn monitor_crypto() -> Result<Vec<CryptoPrice>, String> {
 
     Ok(prices)
 }
+
+// ─── 11. Speed Test ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeedTestResult {
+    pub download_mbps: f64,
+    pub upload_mbps: f64,
+    pub ping_ms: f64,
+    pub server: String,
+    pub timestamp: u64,
+}
+
+fn speedtest_cache() -> &'static Mutex<Option<CacheEntry<SpeedTestResult>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<SpeedTestResult>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+#[tauri::command]
+pub async fn monitor_speedtest() -> Result<SpeedTestResult, String> {
+    // Check cache (TTL: 5 minutes)
+    {
+        let cache = lock_cache(speedtest_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(300)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(60)?;
+
+    // 1. Ping — average of 3 HEAD requests
+    let mut pings: Vec<f64> = Vec::new();
+    for _ in 0..3 {
+        let start = Instant::now();
+        let resp = client
+            .head("https://speed.cloudflare.com/__down?bytes=0")
+            .send()
+            .await;
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+        if resp.is_ok() {
+            pings.push(elapsed);
+        }
+    }
+    let ping_ms = if pings.is_empty() {
+        0.0
+    } else {
+        pings.iter().sum::<f64>() / pings.len() as f64
+    };
+
+    // 2. Download — 10MB file
+    let dl_size: u64 = 10_000_000;
+    let start = Instant::now();
+    let resp = client
+        .get(format!("https://speed.cloudflare.com/__down?bytes={}", dl_size))
+        .send()
+        .await
+        .map_err(|e| format!("speedtest download: {}", e))?;
+
+    // Consume the full body
+    let body = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("speedtest download read: {}", e))?;
+    let dl_elapsed = start.elapsed().as_secs_f64();
+    let actual_dl_bytes = body.len() as f64;
+    let download_mbps = if dl_elapsed > 0.0 {
+        (actual_dl_bytes * 8.0) / (dl_elapsed * 1_000_000.0)
+    } else {
+        0.0
+    };
+
+    // 3. Upload — 2MB payload
+    let ul_size = 2_000_000;
+    let payload = vec![0u8; ul_size];
+    let start = Instant::now();
+    let _resp = client
+        .post("https://speed.cloudflare.com/__up")
+        .body(payload)
+        .send()
+        .await
+        .map_err(|e| format!("speedtest upload: {}", e))?;
+    let ul_elapsed = start.elapsed().as_secs_f64();
+    let upload_mbps = if ul_elapsed > 0.0 {
+        (ul_size as f64 * 8.0) / (ul_elapsed * 1_000_000.0)
+    } else {
+        0.0
+    };
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let result = SpeedTestResult {
+        download_mbps,
+        upload_mbps,
+        ping_ms,
+        server: "Cloudflare CDN".to_string(),
+        timestamp,
+    };
+
+    // Store in cache
+    {
+        let mut cache = lock_cache(speedtest_cache())?;
+        *cache = Some(CacheEntry::new(result.clone()));
+    }
+
+    Ok(result)
+}
+
+// ─── 12. Network Throughput ───────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetThroughput {
+    pub download_bytes_sec: f64,
+    pub upload_bytes_sec: f64,
+    pub total_rx_bytes: u64,
+    pub total_tx_bytes: u64,
+}
+
+struct NetSnapshot {
+    rx: u64,
+    tx: u64,
+    time: Instant,
+}
+
+fn net_snapshot_cache() -> &'static Mutex<Option<NetSnapshot>> {
+    static C: OnceLock<Mutex<Option<NetSnapshot>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+#[tauri::command]
+pub async fn monitor_net_throughput() -> Result<NetThroughput, String> {
+    use sysinfo::Networks;
+
+    let networks = Networks::new_with_refreshed_list();
+
+    let mut total_rx: u64 = 0;
+    let mut total_tx: u64 = 0;
+    for (_name, data) in &networks {
+        total_rx += data.total_received();
+        total_tx += data.total_transmitted();
+    }
+
+    let now = Instant::now();
+    let mut cache = net_snapshot_cache()
+        .lock()
+        .map_err(|e| format!("net snapshot lock: {}", e))?;
+
+    let (dl_bps, ul_bps) = if let Some(ref prev) = *cache {
+        let elapsed = now.duration_since(prev.time).as_secs_f64();
+        if elapsed > 0.0 {
+            let dl = total_rx.saturating_sub(prev.rx) as f64 / elapsed;
+            let ul = total_tx.saturating_sub(prev.tx) as f64 / elapsed;
+            (dl, ul)
+        } else {
+            (0.0, 0.0)
+        }
+    } else {
+        (0.0, 0.0)
+    };
+
+    *cache = Some(NetSnapshot {
+        rx: total_rx,
+        tx: total_tx,
+        time: now,
+    });
+
+    Ok(NetThroughput {
+        download_bytes_sec: dl_bps,
+        upload_bytes_sec: ul_bps,
+        total_rx_bytes: total_rx,
+        total_tx_bytes: total_tx,
+    })
+}

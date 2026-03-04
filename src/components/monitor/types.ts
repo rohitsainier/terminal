@@ -51,6 +51,19 @@ export interface CryptoPrice {
   market_cap: number;
   volume_24h: number;
 }
+export interface SpeedTestResult {
+  download_mbps: number;
+  upload_mbps: number;
+  ping_ms: number;
+  server: string;
+  timestamp: number;
+}
+export interface NetThroughput {
+  download_bytes_sec: number;
+  upload_bytes_sec: number;
+  total_rx_bytes: number;
+  total_tx_bytes: number;
+}
 export interface SysStats {
   os: string;
   hostname: string;
@@ -116,8 +129,10 @@ export interface MonitorStore {
   setUtc: Setter<string>;
   tickerOffset: Accessor<number>;
   setTickerOffset: Setter<number>;
-  packetCount: Accessor<number>;
-  setPacketCount: Setter<number>;
+  netThroughput: Accessor<NetThroughput | null>;
+  setNetThroughput: Setter<NetThroughput | null>;
+  netMonitorEnabled: Accessor<boolean>;
+  setNetMonitorEnabled: Setter<boolean>;
   globeReady: Accessor<boolean>;
   setGlobeReady: Setter<boolean>;
   streamMuted: Accessor<boolean>;
@@ -173,6 +188,12 @@ export interface MonitorStore {
   activeWebcam: Accessor<WebcamInfo | null>;
   setActiveWebcam: Setter<WebcamInfo | null>;
 
+  // Speedtest
+  speedtest: Accessor<SpeedTestResult | null>;
+  setSpeedtest: Setter<SpeedTestResult | null>;
+  speedtestLoading: Accessor<boolean>;
+  setSpeedtestLoading: Setter<boolean>;
+
   // Fetch functions
   fetchCoreData: () => void;
   fetchCrypto: () => void;
@@ -180,6 +201,8 @@ export interface MonitorStore {
   fetchSatellites: (group: string) => void;
   fetchFlights: () => void;
   propagateAllSats: (tles?: SatTLE[]) => void;
+  runSpeedtest: () => void;
+  fetchNetThroughput: () => void;
 
   // Derived helpers
   memPercent: () => number;

@@ -278,12 +278,88 @@
   line-height: 1.3;
 }
 
-.fcmd-packets {
+.fcmd-net-monitor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 9px;
   font-family: var(--fcmd-font-mono);
-  opacity: 0.6;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 3px 8px;
+  border: 1px solid var(--fcmd-border);
+  border-radius: 6px;
+  transition: all var(--fcmd-transition);
+  opacity: 0.5;
+}
+.fcmd-net-monitor:hover {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+}
+.fcmd-net-monitor.active {
+  opacity: 0.85;
+  border-color: rgba(0, 255, 65, 0.2);
+}
+.fcmd-net-label {
   color: var(--fcmd-text);
+  font-weight: 600;
+}
+.fcmd-net-down {
+  color: #22c55e;
+  font-weight: 600;
+}
+.fcmd-net-up {
+  color: #3b82f6;
+  font-weight: 600;
+}
+.fcmd-net-off {
+  color: rgba(255, 255, 255, 0.3);
+}
+.fcmd-net-waiting {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.fcmd-speedtest {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-family: var(--fcmd-font-mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 3px 8px;
+  border: 1px solid var(--fcmd-border);
+  border-radius: 6px;
+  transition: all var(--fcmd-transition);
+  opacity: 0.7;
+}
+.fcmd-speedtest:hover {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+}
+.fcmd-speedtest.loading {
+  animation: fcmd-speedtest-pulse 1s ease-in-out infinite;
+}
+.fcmd-speedtest-label {
+  color: var(--fcmd-text);
+}
+.fcmd-speedtest-down {
+  color: #22c55e;
+  font-weight: 600;
+}
+.fcmd-speedtest-up {
+  color: #3b82f6;
+  font-weight: 600;
+}
+.fcmd-speedtest-ping {
+  color: #f59e0b;
+  font-weight: 600;
+}
+@keyframes fcmd-speedtest-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 .fcmd-close {
@@ -1705,7 +1781,7 @@
 @media (max-width: 900px) {
   .fcmd-main { grid-template-columns: 190px 1fr; }
   .fcmd-right { display: none; }
-  .fcmd-threat-badge, .fcmd-packets { display: none; }
+  .fcmd-threat-badge, .fcmd-net-monitor { display: none; }
 }
 
 @media (max-width: 700px) {

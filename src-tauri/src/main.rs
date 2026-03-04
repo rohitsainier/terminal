@@ -123,6 +123,8 @@ fn main() {
             monitor::monitor_weather,
             monitor::monitor_quakes,
             monitor::monitor_crypto,
+            monitor::monitor_speedtest,
+            monitor::monitor_net_throughput,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

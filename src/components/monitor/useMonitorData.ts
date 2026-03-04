@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ISSPos, NewsItem, Activity, WeatherPoint, QuakeEvent, CryptoPrice,
   SysStats, SatTLE, SatPos, FlightInfo, WebcamInfo, ThreatEvent,
-  DashboardMode, MonitorStore,
+  SpeedTestResult, NetThroughput, DashboardMode, MonitorStore,
 } from "./types";
 import { LIVE_STREAMS } from "./constants";
 import { propagateTLE, formatUptime, tzTime } from "./utils";
@@ -13,7 +13,8 @@ export function useMonitorData(): MonitorStore {
   const [mode, setMode] = createSignal<DashboardMode>("INTEL");
   const [utc, setUtc] = createSignal("");
   const [tickerOffset, setTickerOffset] = createSignal(0);
-  const [packetCount, setPacketCount] = createSignal(0);
+  const [netThroughput, setNetThroughput] = createSignal<NetThroughput | null>(null);
+  const [netMonitorEnabled, setNetMonitorEnabled] = createSignal(false);
   const [globeReady, setGlobeReady] = createSignal(false);
   const [streamMuted, setStreamMuted] = createSignal(true);
   const [activeStream, setActiveStream] = createSignal(0);
@@ -45,6 +46,10 @@ export function useMonitorData(): MonitorStore {
 
   // Webcams
   const [activeWebcam, setActiveWebcam] = createSignal<WebcamInfo | null>(null);
+
+  // Speedtest
+  const [speedtest, setSpeedtest] = createSignal<SpeedTestResult | null>(null);
+  const [speedtestLoading, setSpeedtestLoading] = createSignal(false);
 
   // Fetch functions
   async function fetchISS() {
@@ -97,6 +102,25 @@ export function useMonitorData(): MonitorStore {
     setFlightLoading(false);
   }
 
+  async function runSpeedtest() {
+    if (speedtestLoading()) return;
+    setSpeedtestLoading(true);
+    try {
+      setSpeedtest(await invoke("monitor_speedtest"));
+    } catch (err) {
+      console.error("[SPEEDTEST] Failed:", err);
+    }
+    setSpeedtestLoading(false);
+  }
+
+  async function fetchNetThroughput() {
+    try {
+      setNetThroughput(await invoke("monitor_net_throughput"));
+    } catch (err) {
+      console.error("[NET] Throughput fetch failed:", err);
+    }
+  }
+
   // Derived helpers
   function memPercent() {
     const s = stats();
@@ -132,7 +156,8 @@ export function useMonitorData(): MonitorStore {
 
   return {
     mode, setMode, utc, setUtc, tickerOffset, setTickerOffset,
-    packetCount, setPacketCount, globeReady, setGlobeReady,
+    netThroughput, setNetThroughput, netMonitorEnabled, setNetMonitorEnabled,
+    globeReady, setGlobeReady,
     streamMuted, setStreamMuted, activeStream, setActiveStream,
     showStream, setShowStream, showModeMenu, setShowModeMenu,
     iss, setISS, news, setNews, stats, setStats,
@@ -144,8 +169,9 @@ export function useMonitorData(): MonitorStore {
     flights, setFlights, flightLoading, setFlightLoading,
     selectedFlight, setSelectedFlight,
     activeWebcam, setActiveWebcam,
+    speedtest, setSpeedtest, speedtestLoading, setSpeedtestLoading,
     fetchCoreData, fetchCrypto, fetchISS,
-    fetchSatellites, fetchFlights, propagateAllSats,
+    fetchSatellites, fetchFlights, propagateAllSats, runSpeedtest, fetchNetThroughput,
     memPercent, threatLevel, tickerText, streamUrl, webcamUrl,
     formatUptime, tzTime,
   };

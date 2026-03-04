@@ -1,4 +1,4 @@
-import { onMount, onCleanup, Show } from "solid-js";
+import { onMount, onCleanup, createEffect, on, Show } from "solid-js";
 import type { DashboardMode } from "./types";
 import { useMonitorData } from "./useMonitorData";
 import { generateThreats } from "./utils";
@@ -42,7 +42,18 @@ export default function MonitorDashboard(props: Props) {
     store.setUtc(new Date().toISOString().slice(11, 19));
     const clockTimer = setInterval(() => store.setUtc(new Date().toISOString().slice(11, 19)), 1000);
     const tickerTimer = setInterval(() => store.setTickerOffset((o) => o + 1), 40);
-    const packetTimer = setInterval(() => store.setPacketCount((c) => c + Math.floor(Math.random() * 120 + 10)), 100);
+
+    // Net throughput — reactive toggle
+    let netTimer: ReturnType<typeof setInterval> | undefined;
+    createEffect(on(store.netMonitorEnabled, (enabled) => {
+      if (netTimer) { clearInterval(netTimer); netTimer = undefined; }
+      if (enabled) {
+        store.fetchNetThroughput();
+        netTimer = setInterval(() => store.fetchNetThroughput(), 1000);
+      } else {
+        store.setNetThroughput(null);
+      }
+    }));
 
     // Threats
     store.setThreats(generateThreats(8));
@@ -88,7 +99,7 @@ export default function MonitorDashboard(props: Props) {
     onCleanup(() => {
       clearInterval(clockTimer);
       clearInterval(tickerTimer);
-      clearInterval(packetTimer);
+      if (netTimer) clearInterval(netTimer);
       clearInterval(threatTimer);
       clearInterval(dataTimer);
       clearInterval(issTimer);
