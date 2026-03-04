@@ -86,6 +86,30 @@ pub struct WeatherPoint {
     pub icon: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuakeEvent {
+    pub id: String,
+    pub place: String,
+    pub lat: f64,
+    pub lng: f64,
+    pub magnitude: f64,
+    pub depth: f64,
+    pub time: u64,
+    pub url: String,
+    pub tsunami: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CryptoPrice {
+    pub id: String,
+    pub symbol: String,
+    pub name: String,
+    pub price: f64,
+    pub change_24h: f64,
+    pub market_cap: f64,
+    pub volume_24h: f64,
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  CACHE INFRASTRUCTURE
 // ═══════════════════════════════════════════════════════════════════
@@ -138,6 +162,16 @@ fn ip_cache() -> &'static Mutex<Option<CacheEntry<String>>> {
 
 fn weather_cache() -> &'static Mutex<Option<CacheEntry<Vec<WeatherPoint>>>> {
     static C: OnceLock<Mutex<Option<CacheEntry<Vec<WeatherPoint>>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn quake_cache() -> &'static Mutex<Option<CacheEntry<Vec<QuakeEvent>>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<Vec<QuakeEvent>>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn crypto_cache() -> &'static Mutex<Option<CacheEntry<Vec<CryptoPrice>>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<Vec<CryptoPrice>>>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(None))
 }
 
@@ -1016,4 +1050,172 @@ pub async fn monitor_weather() -> Result<Vec<WeatherPoint>, String> {
     }
 
     Ok(results)
+}
+
+// ─── 9. Earthquakes ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_quakes() -> Result<Vec<QuakeEvent>, String> {
+    // Check cache (TTL: 5 minutes)
+    {
+        let cache = lock_cache(quake_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(300)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(15)?;
+
+    let resp = client
+        .get("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson")
+        .send()
+        .await
+        .map_err(|e| format!("quake fetch: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("USGS API returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("quake parse: {}", e))?;
+
+    let features = body
+        .get("features")
+        .and_then(|f| f.as_array())
+        .ok_or_else(|| "no features in USGS response".to_string())?;
+
+    let mut quakes: Vec<QuakeEvent> = features
+        .iter()
+        .filter_map(|f| {
+            let props = f.get("properties")?;
+            let geom = f.get("geometry")?;
+            let coords = geom.get("coordinates")?.as_array()?;
+
+            let lng = coords.first()?.as_f64()?;
+            let lat = coords.get(1)?.as_f64()?;
+            let depth = coords.get(2)?.as_f64().unwrap_or(0.0);
+
+            let mag = props.get("mag")?.as_f64()?;
+            let place = props
+                .get("place")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            let time = props.get("time")?.as_u64()?;
+            let url = props
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let tsunami = props
+                .get("tsunami")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0;
+            let id = f
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            Some(QuakeEvent {
+                id,
+                place,
+                lat,
+                lng,
+                magnitude: mag,
+                depth,
+                time,
+                url,
+                tsunami,
+            })
+        })
+        .collect();
+
+    // Sort by magnitude descending
+    quakes.sort_by(|a, b| b.magnitude.partial_cmp(&a.magnitude).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Store in cache
+    {
+        let mut cache = lock_cache(quake_cache())?;
+        *cache = Some(CacheEntry::new(quakes.clone()));
+    }
+
+    Ok(quakes)
+}
+
+// ─── 10. Crypto Prices ──────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_crypto() -> Result<Vec<CryptoPrice>, String> {
+    // Check cache (TTL: 2 minutes)
+    {
+        let cache = lock_cache(crypto_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(120)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(10)?;
+
+    let url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum,solana,dogecoin,cardano,ripple,polkadot,chainlink&order=market_cap_desc&per_page=8&page=1&sparkline=false&price_change_percentage=24h";
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("crypto fetch: {}", e))?;
+
+    if !resp.status().is_success() {
+        // Return cached even if stale on API failure
+        let cache = lock_cache(crypto_cache())?;
+        if let Some(ref entry) = *cache {
+            return Ok(entry.data.clone());
+        }
+        return Err(format!("CoinGecko API returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("crypto parse: {}", e))?;
+
+    let coins = body
+        .as_array()
+        .ok_or_else(|| "unexpected crypto API response".to_string())?;
+
+    let prices: Vec<CryptoPrice> = coins
+        .iter()
+        .filter_map(|c| {
+            Some(CryptoPrice {
+                id: c.get("id")?.as_str()?.to_string(),
+                symbol: c.get("symbol")?.as_str()?.to_uppercase(),
+                name: c.get("name")?.as_str()?.to_string(),
+                price: c.get("current_price")?.as_f64()?,
+                change_24h: c
+                    .get("price_change_percentage_24h")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
+                market_cap: c.get("market_cap").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                volume_24h: c
+                    .get("total_volume")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
+            })
+        })
+        .collect();
+
+    // Store in cache
+    {
+        let mut cache = lock_cache(crypto_cache())?;
+        *cache = Some(CacheEntry::new(prices.clone()));
+    }
+
+    Ok(prices)
 }

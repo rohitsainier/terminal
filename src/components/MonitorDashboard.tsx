@@ -59,6 +59,26 @@ interface WeatherPoint {
   description: string;
   icon: string;
 }
+interface QuakeEvent {
+  id: string;
+  place: string;
+  lat: number;
+  lng: number;
+  magnitude: number;
+  depth: number;
+  time: number;
+  url: string;
+  tsunami: boolean;
+}
+interface CryptoPrice {
+  id: string;
+  symbol: string;
+  name: string;
+  price: number;
+  change_24h: number;
+  market_cap: number;
+  volume_24h: number;
+}
 interface SysStats {
   os: string;
   hostname: string;
@@ -117,7 +137,7 @@ interface Props {
   onClose: () => void;
 }
 
-type DashboardMode = "INTEL" | "CYBER" | "SAT" | "FLIGHTS" | "CAMS" | "WEATHER";
+type DashboardMode = "INTEL" | "CYBER" | "SAT" | "FLIGHTS" | "CAMS" | "WEATHER" | "QUAKE";
 
 /* ═══════════════════════════════════════════════════════════════
    CONSTANTS
@@ -133,6 +153,7 @@ const MODE_CONFIG: Record<
   FLIGHTS: { icon: "🛫", label: "FLIGHTS", key: "4", color: "#00d4ff" },
   CAMS: { icon: "📷", label: "CAMS", key: "5", color: "#ffaa44" },
   WEATHER: { icon: "🌤️", label: "WEATHER", key: "6", color: "#f59e0b" },
+  QUAKE: { icon: "🌋", label: "QUAKE", key: "7", color: "#ef4444" },
 };
 
 const SAT_GROUPS = [
@@ -362,6 +383,8 @@ export default function MonitorDashboard(props: Props) {
   const [stats, setStats] = createSignal<SysStats | null>(null);
   const [activity, setActivity] = createSignal<Activity[]>([]);
   const [weather, setWeather] = createSignal<WeatherPoint[]>([]);
+  const [quakes, setQuakes] = createSignal<QuakeEvent[]>([]);
+  const [crypto, setCrypto] = createSignal<CryptoPrice[]>([]);
   const [publicIp, setPublicIp] = createSignal("...");
   const [threats, setThreats] = createSignal<ThreatEvent[]>([]);
 
@@ -405,6 +428,7 @@ export default function MonitorDashboard(props: Props) {
     fetchCoreData();
     const dataTimer = setInterval(fetchCoreData, 20000);
     const issTimer = setInterval(fetchISS, 5000);
+    const cryptoTimer = setInterval(fetchCrypto, 120000);
 
     // Globe
     try {
@@ -426,6 +450,7 @@ export default function MonitorDashboard(props: Props) {
       if (e.key === "4") { switchMode("FLIGHTS"); setShowModeMenu(false); }
       if (e.key === "5") { switchMode("CAMS"); setShowModeMenu(false); }
       if (e.key === "6") { switchMode("WEATHER"); setShowModeMenu(false); }
+      if (e.key === "7") { switchMode("QUAKE"); setShowModeMenu(false); }
       if (e.key === "m" || e.key === "M") setStreamMuted((m) => !m);
     };
     window.addEventListener("keydown", onKey);
@@ -437,6 +462,7 @@ export default function MonitorDashboard(props: Props) {
       clearInterval(threatTimer);
       clearInterval(dataTimer);
       clearInterval(issTimer);
+      clearInterval(cryptoTimer);
       if (satPropTimer) clearInterval(satPropTimer);
       clearTimeout(autoRotateResumeTimer);
       window.removeEventListener("keydown", onKey);
@@ -455,6 +481,12 @@ export default function MonitorDashboard(props: Props) {
     try { setActivity(await invoke("monitor_activity")); } catch {}
     try { setPublicIp(await invoke("monitor_public_ip")); } catch {}
     try { setWeather(await invoke("monitor_weather")); } catch {}
+    try { setQuakes(await invoke("monitor_quakes")); } catch {}
+    try { setCrypto(await invoke("monitor_crypto")); } catch {}
+  }
+
+  async function fetchCrypto() {
+    try { setCrypto(await invoke("monitor_crypto")); } catch {}
   }
 
   async function fetchISS() {
@@ -659,6 +691,39 @@ export default function MonitorDashboard(props: Props) {
           <span class="fcmd-weather-city">${d.city || ""}</span>
         `;
         el.title = `${d.city}, ${d.country}\n${d.description}\nTemp: ${temp}°C | Humidity: ${d.humidity}% | Wind: ${d.wind_speed} km/h`;
+        break;
+      }
+
+      /* ─── QUAKE MARKER ─── */
+      case "quake": {
+        el.className = "fcmd-marker fcmd-quake-marker";
+        const mag = d.magnitude ?? 0;
+        const size = Math.max(16, mag * 6);
+        const magColor = mag < 3 ? "#22c55e" : mag < 5 ? "#eab308" : mag < 7 ? "#f97316" : "#ef4444";
+        const timeAgo = (() => {
+          const mins = Math.floor((Date.now() - (d.time || 0)) / 60000);
+          if (mins < 60) return `${mins}m ago`;
+          const hrs = Math.floor(mins / 60);
+          return `${hrs}h ago`;
+        })();
+        el.innerHTML = `
+          <div class="fcmd-quake-circle" style="
+            width: ${size}px; height: ${size}px;
+            background: ${magColor}33;
+            border: 2px solid ${magColor};
+            box-shadow: 0 0 ${mag * 3}px ${magColor}66;
+          ">
+            <span class="fcmd-quake-mag-label" style="color: ${magColor}">${mag.toFixed(1)}</span>
+          </div>
+          <span class="fcmd-quake-place">${(d.place || "").split(",").pop()?.trim() || ""}</span>
+        `;
+        el.title = `${d.place}\nM${mag.toFixed(1)} | Depth: ${d.depth?.toFixed(1)}km | ${timeAgo}${d.tsunami ? " | ⚠️ TSUNAMI WARNING" : ""}`;
+        if (d.url) {
+          el.addEventListener("dblclick", (e) => {
+            e.stopPropagation();
+            open(d.url);
+          });
+        }
         break;
       }
 
@@ -938,6 +1003,9 @@ export default function MonitorDashboard(props: Props) {
       case "WEATHER":
         configureGlobeWEATHER();
         break;
+      case "QUAKE":
+        configureGlobeQUAKE();
+        break;
     }
   }
 
@@ -1090,6 +1158,60 @@ export default function MonitorDashboard(props: Props) {
       _htmlAlt: 0.01,
     }));
     globeInstance.htmlElementsData(markers);
+  });
+
+  function configureGlobeQUAKE() {
+    if (!globeInstance) return;
+    const q = quakes();
+    const markers = q.map((qk) => ({
+      ...qk,
+      _type: "quake" as const,
+      _htmlAlt: 0.01,
+    }));
+    const rings = q.map((qk) => ({
+      lat: qk.lat,
+      lng: qk.lng,
+      maxR: Math.max(1, qk.magnitude * 0.8),
+      propagationSpeed: 2,
+      repeatPeriod: Math.max(800, 3000 - qk.magnitude * 300),
+    }));
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-night.jpg")
+      .atmosphereColor("#ef4444")
+      .pointsData([])
+      .arcsData([])
+      .labelsData([])
+      .pathsData([])
+      .ringsData(rings)
+      .ringLat((d: any) => d.lat)
+      .ringLng((d: any) => d.lng)
+      .ringColor(() => (t: number) => `rgba(239,68,68,${1 - t})`)
+      .ringMaxRadius((d: any) => d.maxR)
+      .ringPropagationSpeed((d: any) => d.propagationSpeed)
+      .ringRepeatPeriod((d: any) => d.repeatPeriod)
+      .htmlElementsData(markers);
+    globeInstance.controls().autoRotateSpeed = 0.1;
+  }
+
+  // Reactive: update quake markers when data arrives in QUAKE mode
+  createEffect(() => {
+    if (mode() !== "QUAKE" || !globeInstance) return;
+    const q = quakes();
+    if (!q.length) return;
+    const markers = q.map((qk) => ({
+      ...qk,
+      _type: "quake" as const,
+      _htmlAlt: 0.01,
+    }));
+    const rings = q.map((qk) => ({
+      lat: qk.lat,
+      lng: qk.lng,
+      maxR: Math.max(1, qk.magnitude * 0.8),
+      propagationSpeed: 2,
+      repeatPeriod: Math.max(800, 3000 - qk.magnitude * 300),
+    }));
+    globeInstance.htmlElementsData(markers);
+    globeInstance.ringsData(rings);
   });
 
   /* ═══════════════════════════════════════════════════════════════
@@ -1648,6 +1770,48 @@ export default function MonitorDashboard(props: Props) {
                 </Show>
               </section>
             </Show>
+
+            {/* QUAKE mode: earthquake list */}
+            <Show when={mode() === "QUAKE"}>
+              <section class="fcmd-panel fcmd-panel-grow">
+                <h3 class="fcmd-panel-hdr">🌋 EARTHQUAKES ({quakes().length})</h3>
+                <Show when={quakes().length > 0} fallback={<div class="fcmd-dim" style={{ padding: "12px" }}>Fetching seismic data...</div>}>
+                  <div class="fcmd-scroll-list">
+                    <For each={quakes()}>
+                      {(qk) => {
+                        const magColor = () => qk.magnitude < 3 ? "#22c55e" : qk.magnitude < 5 ? "#eab308" : qk.magnitude < 7 ? "#f97316" : "#ef4444";
+                        const timeAgo = () => {
+                          const mins = Math.floor((Date.now() - qk.time) / 60000);
+                          if (mins < 60) return `${mins}m`;
+                          return `${Math.floor(mins / 60)}h`;
+                        };
+                        return (
+                          <div
+                            class="fcmd-list-row fcmd-quake-row"
+                            onClick={() => {
+                              if (globeInstance) {
+                                globeInstance.pointOfView({ lat: qk.lat, lng: qk.lng, altitude: 1.0 }, 600);
+                              }
+                            }}
+                          >
+                            <span class="fcmd-quake-mag-badge" style={{ background: magColor(), color: "#000" }}>
+                              {qk.magnitude.toFixed(1)}
+                            </span>
+                            <div class="fcmd-quake-row-info">
+                              <span class="fcmd-quake-row-place">{qk.place}</span>
+                              <span class="fcmd-quake-row-meta">
+                                {qk.depth.toFixed(0)}km deep · {timeAgo()} ago
+                                {qk.tsunami ? " · ⚠️ TSUNAMI" : ""}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
+              </section>
+            </Show>
           </aside>
 
           {/* ─── CENTER: 3D GLOBE ──────────────────────────────── */}
@@ -1679,6 +1843,9 @@ export default function MonitorDashboard(props: Props) {
               </Show>
               <Show when={mode() === "WEATHER"}>
                 <span class="fcmd-dim">{weather().length} CITIES</span>
+              </Show>
+              <Show when={mode() === "QUAKE"}>
+                <span class="fcmd-dim" style={{ color: "#ef4444" }}>{quakes().length} EARTHQUAKES (24H)</span>
               </Show>
             </div>
 
@@ -1722,7 +1889,8 @@ export default function MonitorDashboard(props: Props) {
                 mode() === "SAT" ? "CELESTRAK" :
                 mode() === "FLIGHTS" ? "OPENSKY-NET" :
                 mode() === "CAMS" ? "CURATED" :
-                mode() === "WEATHER" ? "OPEN-METEO" : "FLUX-NET"
+                mode() === "WEATHER" ? "OPEN-METEO" :
+                mode() === "QUAKE" ? "USGS" : "FLUX-NET"
               }</span>
             </div>
 
@@ -1840,6 +2008,31 @@ export default function MonitorDashboard(props: Props) {
               </section>
             </Show>
 
+            {/* QUAKE mode: right panel summary */}
+            <Show when={mode() === "QUAKE"}>
+              <section class="fcmd-panel fcmd-stream-panel">
+                <h3 class="fcmd-panel-hdr">🌋 SEISMIC SUMMARY</h3>
+                <div class="fcmd-sat-info-box">
+                  <Show when={quakes().length > 0} fallback={<p class="fcmd-dim">Loading seismic data...</p>}>
+                    <div class="fcmd-kv"><span>EVENTS (24H)</span><span>{quakes().length}</span></div>
+                    <div class="fcmd-kv"><span>STRONGEST</span><span style={{ color: "#ef4444" }}>
+                      M{quakes()[0].magnitude.toFixed(1)} — {quakes()[0].place.split(",").pop()?.trim()}
+                    </span></div>
+                    <div class="fcmd-kv"><span>AVG MAG</span><span>
+                      M{(quakes().reduce((s, q) => s + q.magnitude, 0) / quakes().length).toFixed(1)}
+                    </span></div>
+                    <div class="fcmd-kv"><span>AVG DEPTH</span><span>
+                      {(quakes().reduce((s, q) => s + q.depth, 0) / quakes().length).toFixed(0)} km
+                    </span></div>
+                    <div class="fcmd-kv"><span>TSUNAMI ALERTS</span><span style={{ color: quakes().some(q => q.tsunami) ? "#ef4444" : "inherit" }}>
+                      {quakes().filter(q => q.tsunami).length}
+                    </span></div>
+                    <p class="fcmd-dim" style={{ "margin-top": "8px" }}>Data from USGS Earthquake Hazards. M2.5+ events, updated every 5 min.</p>
+                  </Show>
+                </div>
+              </section>
+            </Show>
+
             {/* SAT mode: right panel info */}
             <Show when={mode() === "SAT"}>
               <section class="fcmd-panel fcmd-stream-panel">
@@ -1921,7 +2114,27 @@ export default function MonitorDashboard(props: Props) {
 
         {/* ═══ BOTTOM TICKER ═════════════════════════════════════ */}
         <footer class="fcmd-ticker">
-          <div class="fcmd-ticker-label">INTEL</div>
+          <div class="fcmd-ticker-label">MARKET</div>
+          <div class="fcmd-crypto-strip">
+            <Show when={crypto().length > 0} fallback={
+              <span class="fcmd-ticker-text" style={{ opacity: 0.3 }}>Loading prices...</span>
+            }>
+              <For each={crypto()}>
+                {(coin) => (
+                  <div class="fcmd-crypto-item">
+                    <span class="fcmd-crypto-symbol">{coin.symbol}</span>
+                    <span class="fcmd-crypto-price">
+                      ${coin.price >= 1 ? coin.price.toLocaleString(undefined, { maximumFractionDigits: 0 }) : coin.price.toFixed(4)}
+                    </span>
+                    <span class={`fcmd-crypto-change ${coin.change_24h >= 0 ? "up" : "down"}`}>
+                      {coin.change_24h >= 0 ? "▲" : "▼"}{Math.abs(coin.change_24h).toFixed(1)}%
+                    </span>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+          <div class="fcmd-ticker-divider" />
           <div class="fcmd-ticker-track">
             <div
               class="fcmd-ticker-text"
