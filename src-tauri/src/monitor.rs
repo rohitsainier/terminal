@@ -1,39 +1,69 @@
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
+// ═══════════════════════════════════════════════════════════════════
+//  FLUX CYBER COMMAND — Monitor Backend
+//  TLE Satellites · Live Flights · ISS · News · System · Activity
+// ═══════════════════════════════════════════════════════════════════
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ISSPosition {
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+// ═══════════════════════════════════════════════════════════════════
+//  TYPES
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SatTLE {
+    pub name: String,
+    pub line1: String,
+    pub line2: String,
+    pub group: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightInfo {
+    pub icao24: String,
+    pub callsign: String,
+    pub origin_country: String,
     pub latitude: f64,
     pub longitude: f64,
     pub altitude: f64,
     pub velocity: f64,
-    pub timestamp: u64,
+    pub heading: f64,
+    pub on_ground: bool,
+    pub vertical_rate: f64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ISSPos {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub altitude: f64,
+    pub velocity: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewsItem {
     pub title: String,
     pub source: String,
     pub timestamp: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SystemStats {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SysStats {
     pub os: String,
     pub hostname: String,
     pub uptime_secs: u64,
     pub cpu_count: usize,
     pub memory_total_mb: u64,
     pub memory_used_mb: u64,
-    pub disk_total_gb: u64,
-    pub disk_used_gb: u64,
     pub local_ip: String,
     pub public_ip: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ActivityEvent {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Activity {
     pub lat: f64,
     pub lon: f64,
     pub label: String,
@@ -41,348 +71,748 @@ pub struct ActivityEvent {
     pub intensity: f64,
 }
 
-pub struct MonitorEngine {
-    client: Client,
+// ═══════════════════════════════════════════════════════════════════
+//  CACHE INFRASTRUCTURE
+// ═══════════════════════════════════════════════════════════════════
+
+struct CacheEntry<T> {
+    data: T,
+    fetched_at: Instant,
 }
 
-impl MonitorEngine {
-    pub fn new() -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|_| Client::new());
-        Self { client }
-    }
-
-    /// Fetch ISS position from free API
-    pub async fn fetch_iss_position(&self) -> Result<ISSPosition, String> {
-        let resp = self
-            .client
-            .get("https://api.wheretheiss.at/v1/satellites/25544")
-            .send()
-            .await
-            .map_err(|e| format!("ISS API error: {}", e))?;
-
-        let data: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("ISS parse error: {}", e))?;
-
-        Ok(ISSPosition {
-            latitude: data["latitude"].as_f64().unwrap_or(0.0),
-            longitude: data["longitude"].as_f64().unwrap_or(0.0),
-            altitude: data["altitude"].as_f64().unwrap_or(408.0),
-            velocity: data["velocity"].as_f64().unwrap_or(27600.0),
-            timestamp: data["timestamp"].as_u64().unwrap_or(0),
-        })
-    }
-
-    /// Fetch news headlines from free APIs
-    pub async fn fetch_news(&self) -> Result<Vec<NewsItem>, String> {
-        // Try multiple free sources
-        let sources = vec![
-            ("https://hacker-news.firebaseio.com/v0/topstories.json", "hacker_news"),
-            ("https://www.reddit.com/r/worldnews/hot.json?limit=10", "reddit"),
-        ];
-
-        // Try Hacker News first
-        if let Ok(items) = self.fetch_hackernews().await {
-            if !items.is_empty() {
-                return Ok(items);
-            }
+impl<T> CacheEntry<T> {
+    fn new(data: T) -> Self {
+        Self {
+            data,
+            fetched_at: Instant::now(),
         }
-
-        // Fallback to Reddit
-        if let Ok(items) = self.fetch_reddit_news().await {
-            if !items.is_empty() {
-                return Ok(items);
-            }
-        }
-
-        // Final fallback: simulated headlines
-        Ok(vec![
-            NewsItem { title: "Global AI Summit Announces New Safety Framework".into(), source: "Reuters".into(), timestamp: "2m ago".into() },
-            NewsItem { title: "SpaceX Launches 40 Starlink Satellites".into(), source: "SpaceNews".into(), timestamp: "15m ago".into() },
-            NewsItem { title: "Quantum Computing Breakthrough Achieved".into(), source: "Nature".into(), timestamp: "1h ago".into() },
-            NewsItem { title: "Cybersecurity Alert: Zero-Day Exploit Discovered".into(), source: "CISA".into(), timestamp: "2h ago".into() },
-            NewsItem { title: "Global Markets Rally on Economic Data".into(), source: "Bloomberg".into(), timestamp: "3h ago".into() },
-            NewsItem { title: "Open Source Project Reaches 100K Stars".into(), source: "GitHub".into(), timestamp: "4h ago".into() },
-            NewsItem { title: "New Undersea Cable Connects Continents".into(), source: "TeleGeography".into(), timestamp: "5h ago".into() },
-            NewsItem { title: "Climate Satellite Captures High-Res Data".into(), source: "NASA".into(), timestamp: "6h ago".into() },
-        ])
     }
 
-    async fn fetch_hackernews(&self) -> Result<Vec<NewsItem>, String> {
-        let resp = self
-            .client
-            .get("https://hacker-news.firebaseio.com/v0/topstories.json")
-            .send()
-            .await
-            .map_err(|e| format!("{}", e))?;
+    fn is_fresh(&self, ttl: Duration) -> bool {
+        self.fetched_at.elapsed() < ttl
+    }
+}
 
-        let ids: Vec<u64> = resp.json().await.map_err(|e| format!("{}", e))?;
+// Each cache is a function returning a &'static Mutex<...>
+// Uses OnceLock (stable since Rust 1.70, Tauri v2 requires 1.77+)
 
-        let mut items = Vec::new();
-        for id in ids.iter().take(12) {
-            if let Ok(resp) = self
-                .client
-                .get(format!(
-                    "https://hacker-news.firebaseio.com/v0/item/{}.json",
-                    id
-                ))
-                .send()
-                .await
-            {
-                if let Ok(data) = resp.json::<serde_json::Value>().await {
-                    if let Some(title) = data["title"].as_str() {
-                        items.push(NewsItem {
-                            title: title.to_string(),
-                            source: "Hacker News".into(),
-                            timestamp: format!("#{}", id),
-                        });
-                    }
-                }
-            }
+fn tle_cache() -> &'static Mutex<HashMap<String, CacheEntry<Vec<SatTLE>>>> {
+    static C: OnceLock<Mutex<HashMap<String, CacheEntry<Vec<SatTLE>>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn flight_cache() -> &'static Mutex<Option<CacheEntry<Vec<FlightInfo>>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<Vec<FlightInfo>>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn iss_cache() -> &'static Mutex<Option<CacheEntry<ISSPos>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<ISSPos>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn news_cache() -> &'static Mutex<Option<CacheEntry<Vec<NewsItem>>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<Vec<NewsItem>>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn ip_cache() -> &'static Mutex<Option<CacheEntry<String>>> {
+    static C: OnceLock<Mutex<Option<CacheEntry<String>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+/// Helper: lock a mutex, converting PoisonError to String
+fn lock_cache<T>(m: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, String> {
+    m.lock().map_err(|e| format!("cache lock: {}", e))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  HTTP CLIENT
+// ═══════════════════════════════════════════════════════════════════
+
+fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .user_agent("FluxTerminal/2.0")
+        .build()
+        .map_err(|e| format!("http client: {}", e))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TLE GROUP MAPPING
+// ═══════════════════════════════════════════════════════════════════
+
+fn tle_group_url(group: &str) -> String {
+    let celestrak_id = match group {
+        "stations" => "stations",
+        "starlink" => "starlink",
+        "gps" => "gps-ops",
+        "weather" => "weather",
+        "oneweb" => "oneweb",
+        "iridium" => "iridium-NEXT",
+        "geo" => "geo",
+        "science" => "science",
+        other => other,
+    };
+    format!(
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP={}&FORMAT=tle",
+        celestrak_id
+    )
+}
+
+/// Parse CelesTrak 3-line TLE format
+fn parse_tle_text(text: &str, group: &str) -> Vec<SatTLE> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let mut result = Vec::new();
+    let mut i = 0;
+
+    while i + 2 < lines.len() {
+        let name_line = lines[i];
+        let line1 = lines[i + 1];
+        let line2 = lines[i + 2];
+
+        if line1.starts_with('1') && line2.starts_with('2') {
+            result.push(SatTLE {
+                name: name_line.trim_start_matches("0 ").to_string(),
+                line1: line1.to_string(),
+                line2: line2.to_string(),
+                group: group.to_string(),
+            });
+            i += 3;
+        } else {
+            // Misaligned — skip one line and retry
+            i += 1;
         }
-
-        Ok(items)
     }
 
-    async fn fetch_reddit_news(&self) -> Result<Vec<NewsItem>, String> {
-        let resp = self
-            .client
-            .get("https://www.reddit.com/r/worldnews/hot.json?limit=10")
-            .header("User-Agent", "FluxTerminal/0.1")
-            .send()
-            .await
-            .map_err(|e| format!("{}", e))?;
+    result
+}
 
-        let data: serde_json::Value = resp.json().await.map_err(|e| format!("{}", e))?;
+// ═══════════════════════════════════════════════════════════════════
+//  SIMPLE RSS / XML HELPERS
+// ═══════════════════════════════════════════════════════════════════
 
-        let items = data["data"]["children"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|child| {
-                        let d = &child["data"];
-                        let title = d["title"].as_str()?;
-                        Some(NewsItem {
-                            title: title.to_string(),
-                            source: "Reddit/WorldNews".into(),
-                            timestamp: d["created_utc"]
-                                .as_f64()
-                                .map(|t| format_relative_time(t as u64))
-                                .unwrap_or_else(|| "now".into()),
-                        })
-                    })
-                    .collect()
-            })
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+
+    let start_pos = xml.find(&open)?;
+    let gt = xml[start_pos..].find('>')?;
+    let content_start = start_pos + gt + 1;
+    let end_pos = xml[content_start..].find(&close)?;
+
+    Some(xml[content_start..content_start + end_pos].to_string())
+}
+
+fn clean_html(s: &str) -> String {
+    let mut out = s.to_string();
+    // Strip CDATA wrappers
+    out = out.replace("<![CDATA[", "").replace("]]>", "");
+    // Strip common HTML tags
+    let tags = ["<p>", "</p>", "<b>", "</b>", "<i>", "</i>", "<br>", "<br/>"];
+    for t in tags {
+        out = out.replace(t, "");
+    }
+    // Strip remaining tags (rough)
+    while let (Some(open), Some(_close)) = (out.find('<'), out.find('>')) {
+        if open < out.len() {
+            let close = out[open..].find('>').unwrap_or(0) + open;
+            if close > open && close < out.len() {
+                out = format!("{}{}", &out[..open], &out[close + 1..]);
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    // Decode common entities
+    out = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'");
+    out.trim().to_string()
+}
+
+async fn fetch_rss_feed(
+    client: &reqwest::Client,
+    url: &str,
+    source: &str,
+    max_items: usize,
+) -> Vec<NewsItem> {
+    let resp = match client.get(url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Vec::new(),
+    };
+    let text = match resp.text().await {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut items = Vec::new();
+    let mut pos = 0;
+
+    // Handle both <item> (RSS) and <entry> (Atom)
+    let (open_tag, close_tag) = if text.contains("<entry") {
+        ("<entry", "</entry>")
+    } else {
+        ("<item", "</item>")
+    };
+
+    while let Some(item_start) = text[pos..].find(open_tag) {
+        let abs_start = pos + item_start;
+        let Some(item_end) = text[abs_start..].find(close_tag) else {
+            break;
+        };
+        let item_xml = &text[abs_start..abs_start + item_end];
+
+        let title = extract_xml_tag(item_xml, "title")
+            .map(|t| clean_html(&t))
             .unwrap_or_default();
 
-        Ok(items)
-    }
+        let pub_date = extract_xml_tag(item_xml, "pubDate")
+            .or_else(|| extract_xml_tag(item_xml, "published"))
+            .or_else(|| extract_xml_tag(item_xml, "updated"))
+            .unwrap_or_default();
 
-    /// Get system statistics
-    pub fn get_system_stats(&self) -> SystemStats {
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "unknown".into());
+        let timestamp = if pub_date.len() > 22 {
+            pub_date[..22].trim().to_string()
+        } else {
+            pub_date.trim().to_string()
+        };
 
-        let cpu_count = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
+        if !title.is_empty() && title.len() > 5 {
+            items.push(NewsItem {
+                title,
+                source: source.to_string(),
+                timestamp,
+            });
+        }
 
-        // Get local IP
-        let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".into());
-
-        SystemStats {
-            os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
-            hostname,
-            uptime_secs: get_uptime(),
-            cpu_count,
-            memory_total_mb: get_total_memory_mb(),
-            memory_used_mb: get_used_memory_mb(),
-            disk_total_gb: 0,
-            disk_used_gb: 0,
-            local_ip,
-            public_ip: None,
+        pos = abs_start + item_end + close_tag.len();
+        if items.len() >= max_items {
+            break;
         }
     }
 
-    /// Fetch public IP
-    pub async fn fetch_public_ip(&self) -> Result<String, String> {
-        let resp = self
-            .client
-            .get("https://api.ipify.org?format=json")
-            .send()
-            .await
-            .map_err(|e| format!("{}", e))?;
-
-        let data: serde_json::Value = resp.json().await.map_err(|e| format!("{}", e))?;
-
-        data["ip"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| "No IP".into())
-    }
-
-    /// Generate simulated global activity events
-    pub fn generate_activity(&self) -> Vec<ActivityEvent> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let cities = vec![
-            (40.7, -74.0, "New York"),
-            (51.5, -0.1, "London"),
-            (35.7, 139.7, "Tokyo"),
-            (22.3, 114.2, "Hong Kong"),
-            (37.8, -122.4, "San Francisco"),
-            (-33.9, 151.2, "Sydney"),
-            (55.8, 37.6, "Moscow"),
-            (1.3, 103.8, "Singapore"),
-            (48.9, 2.4, "Paris"),
-            (52.5, 13.4, "Berlin"),
-            (19.1, 72.9, "Mumbai"),
-            (-23.6, -46.6, "São Paulo"),
-            (39.9, 116.4, "Beijing"),
-            (37.6, 127.0, "Seoul"),
-            (25.0, 55.3, "Dubai"),
-            (30.0, 31.2, "Cairo"),
-            (-1.3, 36.8, "Nairobi"),
-            (33.9, -118.2, "Los Angeles"),
-            (41.9, -87.6, "Chicago"),
-            (49.3, -123.1, "Vancouver"),
-            (59.3, 18.1, "Stockholm"),
-            (35.7, 51.4, "Tehran"),
-            (-34.6, -58.4, "Buenos Aires"),
-            (13.8, 100.5, "Bangkok"),
-            (14.6, 121.0, "Manila"),
-            (28.6, 77.2, "Delhi"),
-            (31.2, 121.5, "Shanghai"),
-            (43.7, -79.4, "Toronto"),
-            (64.1, -21.9, "Reykjavik"),
-            (-6.2, 106.8, "Jakarta"),
-        ];
-
-        let event_types = ["NETWORK", "TRAFFIC", "SIGNAL", "DATA_XFER", "SCAN", "PING", "ALERT"];
-
-        cities
-            .iter()
-            .enumerate()
-            .map(|(i, (lat, lon, name))| {
-                let pseudo_rand = ((seed + i as u64 * 7919) % 100) as f64 / 100.0;
-                let evt_idx = ((seed / (i as u64 + 1)) % event_types.len() as u64) as usize;
-                ActivityEvent {
-                    lat: *lat,
-                    lon: *lon,
-                    label: name.to_string(),
-                    event_type: event_types[evt_idx].to_string(),
-                    intensity: 0.3 + pseudo_rand * 0.7,
-                }
-            })
-            .collect()
-    }
+    items
 }
 
-fn format_relative_time(unix_ts: u64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+// ═══════════════════════════════════════════════════════════════════
+//  NETWORK HELPERS
+// ═══════════════════════════════════════════════════════════════════
+
+fn get_local_ip() -> String {
+    std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| {
+            s.connect("8.8.8.8:80")?;
+            s.local_addr()
+        })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ACTIVITY DATA (SIMULATED)
+// ═══════════════════════════════════════════════════════════════════
+
+struct CityInfo {
+    lat: f64,
+    lon: f64,
+    name: &'static str,
+}
+
+const ACTIVITY_CITIES: &[CityInfo] = &[
+    CityInfo { lat: 40.71, lon: -74.0, name: "New York" },
+    CityInfo { lat: 51.51, lon: -0.13, name: "London" },
+    CityInfo { lat: 35.68, lon: 139.69, name: "Tokyo" },
+    CityInfo { lat: 22.32, lon: 114.17, name: "Hong Kong" },
+    CityInfo { lat: 37.77, lon: -122.42, name: "San Francisco" },
+    CityInfo { lat: -33.87, lon: 151.21, name: "Sydney" },
+    CityInfo { lat: 55.76, lon: 37.62, name: "Moscow" },
+    CityInfo { lat: 1.35, lon: 103.82, name: "Singapore" },
+    CityInfo { lat: 48.86, lon: 2.35, name: "Paris" },
+    CityInfo { lat: 52.52, lon: 13.41, name: "Berlin" },
+    CityInfo { lat: 19.08, lon: 72.88, name: "Mumbai" },
+    CityInfo { lat: -23.55, lon: -46.63, name: "São Paulo" },
+    CityInfo { lat: 39.9, lon: 116.4, name: "Beijing" },
+    CityInfo { lat: 37.57, lon: 126.98, name: "Seoul" },
+    CityInfo { lat: 25.2, lon: 55.27, name: "Dubai" },
+    CityInfo { lat: 30.04, lon: 31.24, name: "Cairo" },
+    CityInfo { lat: -1.29, lon: 36.82, name: "Nairobi" },
+    CityInfo { lat: 41.01, lon: 29.0, name: "Istanbul" },
+    CityInfo { lat: 13.76, lon: 100.5, name: "Bangkok" },
+    CityInfo { lat: -6.21, lon: 106.85, name: "Jakarta" },
+    CityInfo { lat: 28.61, lon: 77.21, name: "Delhi" },
+    CityInfo { lat: 31.23, lon: 121.47, name: "Shanghai" },
+    CityInfo { lat: 33.94, lon: -118.24, name: "Los Angeles" },
+    CityInfo { lat: 43.65, lon: -79.38, name: "Toronto" },
+    CityInfo { lat: -34.6, lon: -58.38, name: "Buenos Aires" },
+    CityInfo { lat: 59.33, lon: 18.07, name: "Stockholm" },
+    CityInfo { lat: 38.9, lon: -77.04, name: "Washington DC" },
+    CityInfo { lat: 35.69, lon: 51.39, name: "Tehran" },
+    CityInfo { lat: 6.52, lon: 3.38, name: "Lagos" },
+    CityInfo { lat: -33.93, lon: 18.42, name: "Cape Town" },
+];
+
+const EVENT_TYPES: &[&str] = &[
+    "DATA_BURST",
+    "NET_SCAN",
+    "AUTH_SPIKE",
+    "TRAFFIC_PEAK",
+    "SYS_ALERT",
+    "LINK_EST",
+    "SYNC_PULSE",
+    "API_FLOOD",
+    "KEY_EXCHANGE",
+    "BEACON",
+    "HANDSHAKE",
+    "PROBE",
+];
+
+fn pseudo_random(seed: u64, index: usize) -> usize {
+    // Simple LCG-style pseudo-random
+    let val = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407)
+        .wrapping_add(index as u64);
+    (val >> 16) as usize
+}
+
+fn generate_activity() -> Vec<Activity> {
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
-    let diff = now.saturating_sub(unix_ts);
-    if diff < 60 {
-        format!("{}s ago", diff)
-    } else if diff < 3600 {
-        format!("{}m ago", diff / 60)
-    } else if diff < 86400 {
-        format!("{}h ago", diff / 3600)
-    } else {
-        format!("{}d ago", diff / 86400)
-    }
+    let count = 8 + (seed as usize % 5); // 8-12 items
+
+    (0..count)
+        .map(|i| {
+            let city_idx = pseudo_random(seed, i * 3) % ACTIVITY_CITIES.len();
+            let event_idx = pseudo_random(seed, i * 7 + 1) % EVENT_TYPES.len();
+            let intensity_raw = pseudo_random(seed, i * 11 + 2) % 100;
+
+            let city = &ACTIVITY_CITIES[city_idx];
+
+            Activity {
+                lat: city.lat + (pseudo_random(seed, i * 13) % 100) as f64 * 0.01 - 0.5,
+                lon: city.lon + (pseudo_random(seed, i * 17) % 100) as f64 * 0.01 - 0.5,
+                label: city.name.to_string(),
+                event_type: EVENT_TYPES[event_idx].to_string(),
+                intensity: (intensity_raw as f64) / 100.0,
+            }
+        })
+        .collect()
 }
 
-fn get_local_ip() -> Option<String> {
-    use std::net::UdpSocket;
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("8.8.8.8:80").ok()?;
-    socket.local_addr().ok().map(|a| a.ip().to_string())
-}
+// ═══════════════════════════════════════════════════════════════════
+//  TAURI COMMANDS
+// ═══════════════════════════════════════════════════════════════════
 
-fn get_uptime() -> u64 {
-    #[cfg(target_os = "macos")]
+// ─── 1. Fetch TLE Data ──────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_fetch_tle(group: String) -> Result<Vec<SatTLE>, String> {
+    // Check cache (TTL: 2 hours)
     {
-        use std::process::Command;
-        if let Ok(output) = Command::new("sysctl").arg("-n").arg("kern.boottime").output() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            if let Some(sec_str) = s.split("sec = ").nth(1) {
-                if let Some(sec) = sec_str.split(',').next() {
-                    if let Ok(boot) = sec.trim().parse::<u64>() {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        return now.saturating_sub(boot);
+        let cache = lock_cache(tle_cache())?;
+        if let Some(entry) = cache.get(&group) {
+            if entry.is_fresh(Duration::from_secs(7200)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(30)?;
+    let url = tle_group_url(&group);
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("TLE fetch failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "CelesTrak returned HTTP {}",
+            response.status()
+        ));
+    }
+
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    let tles = parse_tle_text(&text, &group);
+
+    if tles.is_empty() {
+        return Err(format!("No TLE data parsed for group '{}'", group));
+    }
+
+    // Store in cache
+    {
+        let mut cache = lock_cache(tle_cache())?;
+        cache.insert(group, CacheEntry::new(tles.clone()));
+    }
+
+    Ok(tles)
+}
+
+// ─── 2. Fetch Live Flights ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_flights() -> Result<Vec<FlightInfo>, String> {
+    // Check cache (TTL: 15 seconds)
+    {
+        let cache = lock_cache(flight_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(15)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(25)?;
+
+    let response = client
+        .get("https://opensky-network.org/api/states/all")
+        .send()
+        .await
+        .map_err(|e| format!("OpenSky fetch failed: {}", e))?;
+
+    if !response.status().is_success() {
+        // If rate-limited, return cached data if any
+        let cache = lock_cache(flight_cache())?;
+        if let Some(ref entry) = *cache {
+            return Ok(entry.data.clone());
+        }
+        return Err(format!("OpenSky HTTP {}", response.status()));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("JSON parse: {}", e))?;
+
+    let states = json["states"]
+        .as_array()
+        .ok_or("No 'states' array in OpenSky response")?;
+
+    let mut flights = Vec::with_capacity(500);
+
+    for state in states.iter().take(800) {
+        let arr = match state.as_array() {
+            Some(a) if a.len() >= 14 => a,
+            _ => continue,
+        };
+
+        let on_ground = arr[8].as_bool().unwrap_or(true);
+        // OpenSky: index 6 = latitude, index 5 = longitude
+        let lat = match arr[6].as_f64() {
+            Some(v) if v != 0.0 => v,
+            _ => continue,
+        };
+        let lon = match arr[5].as_f64() {
+            Some(v) if v != 0.0 => v,
+            _ => continue,
+        };
+
+        // Skip aircraft on the ground
+        if on_ground {
+            continue;
+        }
+
+        flights.push(FlightInfo {
+            icao24: arr[0].as_str().unwrap_or("").to_string(),
+            callsign: arr[1]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            origin_country: arr[2].as_str().unwrap_or("").to_string(),
+            latitude: lat,
+            longitude: lon,
+            // Prefer geometric altitude (13), fallback to barometric (7)
+            altitude: arr[13]
+                .as_f64()
+                .or_else(|| arr[7].as_f64())
+                .unwrap_or(0.0),
+            velocity: arr[9].as_f64().unwrap_or(0.0),
+            heading: arr[10].as_f64().unwrap_or(0.0),
+            on_ground,
+            vertical_rate: arr[11].as_f64().unwrap_or(0.0),
+        });
+
+        if flights.len() >= 500 {
+            break;
+        }
+    }
+
+    // Store in cache
+    {
+        let mut cache = lock_cache(flight_cache())?;
+        *cache = Some(CacheEntry::new(flights.clone()));
+    }
+
+    Ok(flights)
+}
+
+// ─── 3. ISS Position ────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_iss_position() -> Result<ISSPos, String> {
+    // Check cache (TTL: 5 seconds)
+    {
+        let cache = lock_cache(iss_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(5)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(10)?;
+
+    // Primary: wheretheiss.at (has altitude + velocity)
+    let pos = match client
+        .get("https://api.wheretheiss.at/v1/satellites/25544")
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let json: serde_json::Value =
+                resp.json().await.map_err(|e| e.to_string())?;
+            ISSPos {
+                latitude: json["latitude"].as_f64().unwrap_or(0.0),
+                longitude: json["longitude"].as_f64().unwrap_or(0.0),
+                altitude: json["altitude"].as_f64().unwrap_or(408.0),
+                velocity: json["velocity"].as_f64().unwrap_or(27600.0),
+            }
+        }
+        _ => {
+            // Fallback: open-notify
+            let resp = client
+                .get("http://api.open-notify.org/iss-now.json")
+                .send()
+                .await
+                .map_err(|e| format!("ISS fallback failed: {}", e))?;
+
+            let json: serde_json::Value =
+                resp.json().await.map_err(|e| e.to_string())?;
+
+            let lat = json["iss_position"]["latitude"]
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+                .or_else(|| json["iss_position"]["latitude"].as_f64())
+                .unwrap_or(0.0);
+            let lon = json["iss_position"]["longitude"]
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+                .or_else(|| json["iss_position"]["longitude"].as_f64())
+                .unwrap_or(0.0);
+
+            ISSPos {
+                latitude: lat,
+                longitude: lon,
+                altitude: 408.0,
+                velocity: 27600.0,
+            }
+        }
+    };
+
+    // Validate we got something real
+    if pos.latitude == 0.0 && pos.longitude == 0.0 {
+        // Return cached if available, even if stale
+        let cache = lock_cache(iss_cache())?;
+        if let Some(ref entry) = *cache {
+            return Ok(entry.data.clone());
+        }
+        return Err("ISS position unavailable".to_string());
+    }
+
+    // Update cache
+    {
+        let mut cache = lock_cache(iss_cache())?;
+        *cache = Some(CacheEntry::new(pos.clone()));
+    }
+
+    Ok(pos)
+}
+
+// ─── 4. News ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_news() -> Result<Vec<NewsItem>, String> {
+    // Check cache (TTL: 60 seconds)
+    {
+        let cache = lock_cache(news_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(60)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(15)?;
+
+    let feeds: Vec<(&str, &str)> = vec![
+        ("https://feeds.bbci.co.uk/news/world/rss.xml", "BBC"),
+        (
+            "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+            "NYT",
+        ),
+        (
+            "https://www.aljazeera.com/xml/rss/all.xml",
+            "Al Jazeera",
+        ),
+        ("http://rss.cnn.com/rss/edition_world.rss", "CNN"),
+        ("https://feeds.npr.org/1001/rss.xml", "NPR"),
+    ];
+
+    let mut all_news: Vec<NewsItem> = Vec::new();
+
+    for (url, source) in &feeds {
+        let items = fetch_rss_feed(&client, url, source, 6).await;
+        all_news.extend(items);
+    }
+
+    // Interleave sources for variety (round-robin by source)
+    let mut grouped: HashMap<String, Vec<NewsItem>> = HashMap::new();
+    for item in all_news {
+        grouped
+            .entry(item.source.clone())
+            .or_default()
+            .push(item);
+    }
+    let mut interleaved: Vec<NewsItem> = Vec::new();
+    let max_per_source = grouped
+        .values()
+        .map(|v| v.len())
+        .max()
+        .unwrap_or(0);
+    for i in 0..max_per_source {
+        for items in grouped.values() {
+            if i < items.len() {
+                interleaved.push(items[i].clone());
+            }
+        }
+    }
+    interleaved.truncate(20);
+
+    // Update cache
+    {
+        let mut cache = lock_cache(news_cache())?;
+        *cache = Some(CacheEntry::new(interleaved.clone()));
+    }
+
+    Ok(interleaved)
+}
+
+// ─── 5. System Stats ────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_system_stats() -> Result<SysStats, String> {
+    use sysinfo::System;
+
+    let mut sys = System::new();
+    sys.refresh_memory();
+
+    let total_memory_mb = sys.total_memory() / 1_048_576;
+    let used_memory_mb = sys.used_memory() / 1_048_576;
+
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    let hostname = System::host_name().unwrap_or_else(|| "unknown".into());
+    let uptime = System::uptime();
+
+    let os_info = System::long_os_version()
+        .or_else(|| System::os_version())
+        .unwrap_or_else(|| std::env::consts::OS.to_string());
+
+    let local_ip = get_local_ip();
+
+    Ok(SysStats {
+        os: os_info,
+        hostname,
+        uptime_secs: uptime,
+        cpu_count,
+        memory_total_mb: total_memory_mb,
+        memory_used_mb: used_memory_mb,
+        local_ip,
+        public_ip: None, // fetched separately via monitor_public_ip
+    })
+}
+
+// ─── 6. Public IP ───────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn monitor_public_ip() -> Result<String, String> {
+    // Check cache (TTL: 5 minutes)
+    {
+        let cache = lock_cache(ip_cache())?;
+        if let Some(ref entry) = *cache {
+            if entry.is_fresh(Duration::from_secs(300)) {
+                return Ok(entry.data.clone());
+            }
+        }
+    }
+
+    let client = http_client(8)?;
+
+    // Try multiple services in order
+    let services = [
+        "https://api.ipify.org",
+        "https://checkip.amazonaws.com",
+        "https://ifconfig.me/ip",
+        "https://icanhazip.com",
+    ];
+
+    let mut last_err = String::from("all IP services failed");
+
+    for url in &services {
+        match client.get(*url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(text) = resp.text().await {
+                    let ip = text.trim().to_string();
+                    if !ip.is_empty() && ip.len() < 50 {
+                        // Update cache
+                        let mut cache = lock_cache(ip_cache())?;
+                        *cache = Some(CacheEntry::new(ip.clone()));
+                        return Ok(ip);
                     }
                 }
             }
+            Ok(resp) => {
+                last_err = format!("{} returned {}", url, resp.status());
+            }
+            Err(e) => {
+                last_err = format!("{}: {}", url, e);
+            }
         }
     }
-    0
+
+    // Return cached even if stale
+    {
+        let cache = lock_cache(ip_cache())?;
+        if let Some(ref entry) = *cache {
+            return Ok(entry.data.clone());
+        }
+    }
+
+    Err(last_err)
 }
 
-fn get_total_memory_mb() -> u64 {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            if let Ok(bytes) = s.trim().parse::<u64>() {
-                return bytes / 1024 / 1024;
-            }
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-            for line in content.lines() {
-                if line.starts_with("MemTotal:") {
-                    if let Some(kb) = line.split_whitespace().nth(1) {
-                        if let Ok(val) = kb.parse::<u64>() {
-                            return val / 1024;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    0
-}
+// ─── 7. Activity ────────────────────────────────────────────────
 
-fn get_used_memory_mb() -> u64 {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("vm_stat").output() {
-            let s = String::from_utf8_lossy(&output.stdout);
-            let mut active = 0u64;
-            let mut wired = 0u64;
-            let mut compressed = 0u64;
-            for line in s.lines() {
-                let parts: Vec<&str> = line.split(':').collect();
-                if parts.len() == 2 {
-                    let val = parts[1].trim().trim_end_matches('.').parse::<u64>().unwrap_or(0);
-                    let label = parts[0].trim();
-                    if label.contains("Pages active") { active = val; }
-                    if label.contains("Pages wired") { wired = val; }
-                    if label.contains("Pages occupied by compressor") { compressed = val; }
-                }
-            }
-            return (active + wired + compressed) * 4096 / 1024 / 1024;
-        }
-    }
-    0
+#[tauri::command]
+pub async fn monitor_activity() -> Result<Vec<Activity>, String> {
+    Ok(generate_activity())
 }

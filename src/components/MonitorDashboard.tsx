@@ -1,890 +1,1244 @@
-import { createSignal, onMount, onCleanup, Show, For } from "solid-js";
+// ═══════════════════════════════════════════════════════════════════
+//  FLUX CYBER COMMAND v2 — Global Intelligence Monitoring System
+//  Modes: INTEL · CYBER · SAT · FLIGHTS · CAMS
+//  3D Globe · Live Satellites · Real-Time Flights · Webcams
+// ═══════════════════════════════════════════════════════════════════
+
+import {
+  createSignal,
+  createEffect,
+  onMount,
+  onCleanup,
+  Show,
+  For,
+  batch,
+} from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-
-// ─── Types ───────────────────────────
-
-interface ISSPos { latitude: number; longitude: number; altitude: number; velocity: number }
-interface NewsItem { title: string; source: string; timestamp: string }
-interface Activity { lat: number; lon: number; label: string; event_type: string; intensity: number }
-interface SysStats { os: string; hostname: string; uptime_secs: number; cpu_count: number; memory_total_mb: number; memory_used_mb: number; local_ip: string; public_ip: string | null }
-
-interface Props { onClose: () => void }
-
-// ═══════════════════════════════════════
-// DETAILED COASTLINE DATA  [lon, lat]
-// ═══════════════════════════════════════
-
-const COASTS: [number, number][][] = [
-
-  // ── NORTH AMERICA ─────────────────
-
-  // Alaska Aleutians & Peninsula
-  [[-170,53],[-168,53],[-166,54],[-164,54],[-162,54],[-161,55],[-160,56],[-158,57],[-156,57],[-155,58],[-153,58],[-152,59],[-150,60],[-149,61],[-148,61],[-147,61],[-146,61]],
-
-  // Alaska South Coast to Panhandle
-  [[-146,61],[-145,60],[-144,60],[-143,60],[-142,60],[-141,60],[-140,60],[-139,59],[-138,58],[-137,58],[-136,58],[-135,57],[-134,56],[-133,56],[-132,55],[-131,54],[-130,55]],
-
-  // Alaska North Coast
-  [[-141,70],[-144,70],[-148,71],[-152,71],[-155,71],[-158,71],[-160,70],[-163,69],[-165,68],[-167,67],[-168,66],[-166,65],[-164,64],[-163,63],[-162,62],[-163,60],[-162,58],[-161,57],[-160,56]],
-
-  // BC & Pacific NW
-  [[-130,55],[-129,53],[-128,52],[-127,51],[-126,50],[-126,49],[-125,49],[-124,48],[-124,47],[-124,46]],
-
-  // US West Coast
-  [[-124,46],[-124,44],[-124,43],[-124,42],[-123,41],[-122,40],[-122,39],[-121,38],[-121,37],[-120,36],[-119,35],[-118,34],[-118,33],[-117,33],[-117,32]],
-
-  // Baja & Mexico Pacific
-  [[-117,32],[-116,31],[-115,30],[-114,29],[-113,28],[-112,27],[-111,26],[-110,25],[-109,24],[-108,23],[-107,22],[-106,21],[-105,20],[-105,19],[-104,18],[-103,17],[-102,17],[-101,17],[-100,17],[-98,16],[-97,16]],
-
-  // Central America Pacific
-  [[-97,16],[-95,15],[-94,15],[-93,14],[-92,14],[-91,13],[-90,13],[-89,13],[-88,13],[-87,12],[-86,11],[-85,10],[-84,10],[-83,9],[-82,8],[-81,8],[-80,7],[-79,7],[-78,6],[-77,7]],
-
-  // South America Pacific Coast
-  [[-77,7],[-78,4],[-79,2],[-80,1],[-80,0],[-81,-1],[-81,-3],[-81,-5],[-80,-6],[-79,-7],[-78,-8],[-77,-10],[-76,-12],[-76,-14],[-75,-15],[-75,-17],[-74,-18],[-72,-18],[-71,-19],[-70,-21],[-70,-23],[-70,-25],[-71,-28],[-71,-30],[-72,-32],[-73,-34],[-73,-36],[-74,-38],[-74,-40],[-74,-42],[-74,-44],[-73,-46],[-74,-48],[-73,-50],[-72,-52],[-71,-53],[-70,-54],[-69,-55],[-68,-56]],
-
-  // Tierra del Fuego
-  [[-68,-56],[-67,-55],[-66,-55],[-65,-55],[-64,-55]],
-
-  // South America Atlantic (south to north)
-  [[-64,-55],[-64,-52],[-63,-50],[-63,-48],[-62,-45],[-61,-42],[-60,-40],[-58,-38],[-57,-36],[-56,-35],[-55,-34],[-53,-33],[-52,-32],[-51,-30],[-50,-29],[-49,-28],[-48,-27],[-47,-25],[-46,-24],[-45,-23],[-44,-23],[-43,-23],[-42,-22],[-41,-21],[-40,-20],[-39,-18],[-39,-16],[-38,-14],[-38,-12],[-37,-10],[-36,-8],[-35,-6],[-35,-4],[-35,-2],[-36,0],[-38,0],[-40,1],[-44,2],[-48,2],[-50,3],[-52,4],[-54,5],[-56,6],[-58,7],[-60,8],[-61,9],[-62,10],[-64,11],[-67,11],[-68,12],[-70,12],[-72,11],[-73,11],[-75,10],[-77,9],[-78,9],[-79,9],[-80,8],[-80,7]],
-
-  // Caribbean coast Colombia/Venezuela
-  [[-77,9],[-76,10],[-75,11],[-74,11],[-73,12],[-71,12],[-70,12],[-68,11],[-67,11],[-65,10],[-64,10],[-63,10],[-62,11],[-61,10],[-60,11]],
-
-  // Gulf of Mexico — Texas to Florida
-  [[-97,16],[-97,18],[-97,20],[-97,22],[-97,24],[-97,26],[-96,28],[-95,29],[-94,30],[-93,30],[-92,29],[-91,29],[-90,29],[-89,29],[-89,30],[-88,30],[-87,30],[-86,30],[-85,30],[-84,30],[-83,29],[-82,28],[-82,27],[-82,26],[-81,25],[-80,25]],
-
-  // Florida peninsula & US East Coast
-  [[-80,25],[-80,26],[-80,27],[-81,28],[-81,30],[-81,31],[-80,32],[-79,33],[-78,34],[-77,35],[-76,36],[-76,37],[-75,38],[-75,39],[-74,40],[-74,41],[-73,41],[-72,41],[-71,42],[-70,42],[-70,43],[-69,44],[-68,44],[-67,45],[-67,44],[-66,44]],
-
-  // Maritime Canada
-  [[-66,44],[-65,44],[-64,45],[-63,46],[-62,46],[-61,46],[-60,47],[-59,47],[-58,48],[-57,48],[-56,48],[-55,47],[-53,47],[-52,47]],
-
-  // Newfoundland
-  [[-52,47],[-53,48],[-54,49],[-55,50],[-56,51],[-57,52],[-58,52],[-59,51],[-58,49],[-56,48],[-54,47],[-52,47]],
-
-  // Labrador coast
-  [[-56,51],[-58,53],[-59,55],[-60,56],[-61,57],[-62,58],[-64,60],[-66,60],[-68,61],[-70,62]],
-
-  // East coast Hudson Bay to Arctic
-  [[-70,62],[-72,62],[-74,63],[-76,63],[-78,62],[-80,60],[-82,58],[-84,57],[-86,56],[-88,56]],
-
-  // Hudson Bay
-  [[-88,56],[-86,55],[-84,54],[-82,53],[-80,54],[-78,55],[-76,56],[-76,58],[-78,60],[-80,60]],
-
-  // Canadian Arctic mainland coast
-  [[-88,56],[-90,58],[-92,60],[-92,62],[-94,64],[-96,64],[-98,65],[-100,66],[-102,67],[-105,68],[-108,68],[-110,68],[-112,69],[-115,70],[-118,70],[-120,71],[-125,72],[-130,72],[-135,72],[-138,71],[-140,70],[-141,70]],
-
-  // Canadian Arctic Islands — Baffin Island
-  [[-62,64],[-64,66],[-66,68],[-68,70],[-70,72],[-73,73],[-76,74],[-80,74],[-82,73],[-80,72],[-78,70],[-75,68],[-72,67],[-70,66],[-68,64],[-65,63],[-62,64]],
-
-  // Ellesmere & Devon Islands
-  [[-80,76],[-78,78],[-74,80],[-70,82],[-66,82],[-62,80],[-64,78],[-68,77],[-72,76],[-76,76],[-80,76]],
-
-  // Victoria Island
-  [[-105,70],[-108,72],[-112,73],[-115,72],[-114,70],[-110,69],[-107,70],[-105,70]],
-
-  // Banks Island
-  [[-118,72],[-122,74],[-126,74],[-124,72],[-120,71],[-118,72]],
-
-  // Greenland
-  [[-52,60],[-50,61],[-48,62],[-46,63],[-44,64],[-42,65],[-40,66],[-38,67],[-35,68],[-32,69],[-28,70],[-24,71],[-22,72],[-20,74],[-19,76],[-20,78],[-22,80],[-26,82],[-30,83],[-35,83],[-40,82],[-44,81],[-48,80],[-50,78],[-52,76],[-54,74],[-55,72],[-54,70],[-53,68],[-52,66],[-51,64],[-51,62],[-52,60]],
-
-  // Cuba
-  [[-85,22],[-84,23],[-83,23],[-82,23],[-81,23],[-80,23],[-79,23],[-78,22],[-77,21],[-76,20],[-75,20],[-74,20],[-75,20],[-77,21],[-79,22],[-81,23],[-83,23],[-85,22]],
-
-  // Hispaniola (Haiti & Dominican Republic)
-  [[-74,20],[-73,20],[-72,19],[-71,19],[-70,19],[-69,19],[-68,19],[-69,19],[-70,20],[-72,20],[-74,20]],
-
-  // Puerto Rico
-  [[-67,18],[-66,18],[-65,18],[-66,18],[-67,18]],
-
-  // Jamaica
-  [[-78,18],[-77,18],[-76,18],[-77,18],[-78,18]],
-
-  // Lesser Antilles chain (simplified)
-  [[-62,17],[-61,16],[-61,15],[-61,14],[-61,13],[-61,12]],
-
-  // ── EUROPE ────────────────────────
-
-  // Iberian Peninsula
-  [[-10,36],[-9,37],[-9,38],[-9,39],[-9,40],[-8,41],[-8,42],[-8,43],[-7,43],[-6,44],[-5,44],[-4,44],[-3,44],[-2,44],[-1,43],[0,42],[1,41]],
-
-  // Mediterranean Spain & France
-  [[1,41],[2,42],[3,43],[4,43],[5,43],[6,43],[7,44],[8,44]],
-
-  // French Atlantic coast
-  [[-1,43],[-1,44],[-1,45],[-1,46],[-2,47],[-3,48],[-4,48],[-5,48]],
-
-  // Brittany to English Channel
-  [[-5,48],[-4,49],[-3,49],[-2,49],[-1,50],[0,50],[1,51],[2,51]],
-
-  // North Sea coast (France/Belgium/Netherlands/Germany/Denmark)
-  [[2,51],[3,51],[4,52],[5,53],[6,54],[7,55],[8,55],[8,56],[9,55],[10,55],[10,54],[11,54],[12,55],[12,56]],
-
-  // Denmark Jutland
-  [[9,55],[9,57],[10,57],[10,58],[11,57],[12,56]],
-
-  // Great Britain
-  [[-6,50],[-5,50],[-4,50],[-3,50],[-2,51],[-1,51],[0,51],[1,52],[1,53],[0,54],[-1,55],[-2,55],[-3,56],[-4,57],[-5,58],[-5,57],[-4,56],[-3,55],[-3,54],[-4,53],[-4,52],[-5,51],[-5,50],[-6,50]],
-
-  // Scotland north coast
-  [[-5,58],[-4,58],[-3,59],[-2,58],[-1,58],[0,57],[0,56]],
-
-  // Ireland
-  [[-10,52],[-10,53],[-9,54],[-8,55],[-7,55],[-6,55],[-6,54],[-6,53],[-7,52],[-8,52],[-9,52],[-10,52]],
-
-  // Norway
-  [[5,58],[5,59],[5,60],[6,61],[6,62],[7,63],[8,63],[10,63],[12,64],[13,65],[14,66],[15,67],[16,68],[16,69],[17,70],[18,70],[20,70],[22,70],[24,71],[26,71],[28,71],[30,71],[32,70]],
-
-  // Sweden east coast & Finland
-  [[18,60],[18,62],[18,64],[20,66],[22,68],[24,68],[24,66],[24,64],[26,63],[28,62],[28,61],[30,60]],
-
-  // Baltic states & Russia Baltic
-  [[22,60],[24,59],[26,58],[28,58],[28,60],[30,60]],
-
-  // Italy — West coast
-  [[8,44],[9,44],[10,44],[10,43],[11,43],[11,42],[12,42],[12,41],[13,41],[14,40],[15,40],[15,39],[16,38]],
-
-  // Italy — East coast (Adriatic)
-  [[13,46],[13,45],[13,44],[14,44],[14,43],[15,42],[16,42],[16,41],[17,41],[18,41],[18,40],[16,39],[16,38]],
-
-  // Italy toe and heel
-  [[16,38],[17,39],[18,40]],
-
-  // Sicily
-  [[13,38],[14,38],[15,37],[14,37],[13,37],[12,38],[13,38]],
-
-  // Sardinia
-  [[8,39],[9,39],[10,40],[10,41],[9,41],[8,40],[8,39]],
-
-  // Corsica
-  [[9,42],[9,43],[9,43],[8,42],[9,42]],
-
-  // Croatia / Montenegro / Albania
-  [[14,45],[15,45],[16,43],[17,43],[18,42],[19,42],[20,41],[20,40]],
-
-  // Greece mainland
-  [[20,40],[21,39],[22,38],[23,37],[24,36],[23,38],[22,39],[20,40]],
-
-  // Greece — Peloponnese
-  [[22,38],[22,37],[21,37],[22,36],[23,36],[23,37],[22,38]],
-
-  // Crete
-  [[24,35],[25,35],[26,35],[27,35],[26,35],[24,35]],
-
-  // Turkey north coast (Black Sea)
-  [[26,42],[28,42],[30,42],[32,42],[34,42],[36,42],[38,41],[40,41],[42,42]],
-
-  // Turkey south coast (Mediterranean)
-  [[26,36],[28,36],[30,37],[32,37],[34,37],[36,37],[36,36]],
-
-  // Turkey west coast (Aegean)
-  [[26,36],[26,38],[27,39],[26,40],[26,42]],
-
-  // Black Sea south coast to north
-  [[42,42],[42,44],[40,44],[38,46],[36,46],[34,46],[32,46],[30,46],[30,44],[28,44],[26,42]],
-
-  // Caspian Sea
-  [[48,42],[49,44],[50,45],[51,44],[52,44],[53,42],[54,40],[53,38],[52,37],[50,37],[48,38],[48,40],[48,42]],
-
-  // ── AFRICA ────────────────────────
-
-  // North Africa Mediterranean coast
-  [[-6,35],[-5,36],[-4,36],[-2,36],[-1,36],[0,36],[2,37],[4,37],[5,37],[7,37],[8,37],[10,37],[11,36],[12,33],[13,33],[15,32],[18,32],[20,32],[22,32],[24,32],[26,31],[28,31],[30,31],[32,32],[34,32]],
-
-  // West Africa (Morocco south to Senegal)
-  [[-6,35],[-8,34],[-10,33],[-12,30],[-13,28],[-14,26],[-16,24],[-17,22],[-17,20],[-17,18],[-17,16],[-17,15],[-17,14]],
-
-  // West Africa coast (Senegal to Nigeria)
-  [[-17,14],[-16,13],[-16,12],[-15,11],[-14,10],[-13,10],[-12,8],[-11,7],[-10,7],[-8,5],[-7,5],[-6,5],[-5,5],[-4,5],[-3,5],[-2,5],[-1,5],[0,6],[1,6],[2,6],[3,6],[4,6]],
-
-  // Gulf of Guinea
-  [[4,6],[5,5],[6,4],[7,4],[8,4],[9,4],[10,4],[10,3],[10,2],[10,1],[9,0],[9,-1],[9,-2],[9,-3]],
-
-  // West Central Africa coast
-  [[9,-3],[10,-4],[11,-5],[12,-6],[12,-8],[12,-10],[12,-12],[13,-14],[13,-16],[14,-18],[15,-20],[16,-22],[16,-24],[17,-27],[17,-29],[18,-32],[18,-34]],
-
-  // Southern Africa
-  [[18,-34],[19,-34],[20,-35],[22,-34],[24,-34],[26,-34],[28,-33],[28,-32],[30,-30]],
-
-  // East Africa south
-  [[30,-30],[31,-28],[32,-26],[33,-25],[34,-24],[35,-22],[36,-20],[37,-18],[38,-16],[39,-14],[40,-12],[41,-10],[42,-8],[43,-6],[44,-4],[45,-2],[46,0],[47,2],[48,4],[49,6],[50,8],[50,10]],
-
-  // Horn of Africa (Somalia)
-  [[50,10],[50,12],[48,12],[46,12],[44,12],[43,12],[42,12],[42,10],[44,8],[46,6],[48,4]],
-
-  // Red Sea — Egypt/Sudan coast
-  [[34,32],[34,30],[33,28],[34,26],[35,24],[36,22],[38,20],[39,18],[40,16],[42,14],[43,12]],
-
-  // Madagascar
-  [[44,-12],[45,-13],[46,-15],[47,-17],[48,-19],[49,-21],[49,-23],[48,-25],[47,-26],[45,-26],[44,-24],[43,-22],[44,-18],[43,-16],[43,-14],[44,-12]],
-
-  // ── MIDDLE EAST & ARABIAN PENINSULA ──
-
-  // Levant coast
-  [[34,32],[35,34],[36,36],[35,36]],
-
-  // Red Sea east coast — Arabian Peninsula west
-  [[36,28],[38,24],[39,22],[40,20],[42,18],[43,14],[44,12],[45,12]],
-
-  // Arabian Peninsula south coast
-  [[45,12],[46,13],[48,14],[50,16],[52,17],[54,17],[56,18],[58,22]],
-
-  // Oman/UAE coast
-  [[58,22],[56,24],[55,25],[54,25],[52,24],[51,24],[50,26],[49,27],[48,28],[48,30]],
-
-  // Persian Gulf (both coasts)
-  [[48,30],[49,30],[50,30],[52,28],[54,27],[55,26],[56,24]],
-  [[48,30],[48,29],[48,28],[50,27],[51,26],[50,26]],
-
-  // Iran south coast
-  [[56,24],[57,26],[58,26],[60,26],[62,25],[64,25],[66,25],[68,24],[70,22]],
-
-  // ── SOUTH ASIA ────────────────────
-
-  // India west coast
-  [[70,22],[72,21],[72,20],[72,18],[73,16],[74,14],[75,12],[76,10],[77,8]],
-
-  // India south tip & east coast
-  [[77,8],[78,8],[79,8],[80,9],[80,10],[80,12],[80,14],[81,15],[82,16],[83,17],[84,18],[85,19],[86,20],[87,21],[88,22],[89,22],[90,22]],
-
-  // Sri Lanka
-  [[80,10],[81,9],[82,8],[82,7],[81,6],[80,6],[80,7],[79,8],[80,10]],
-
-  // ── SOUTHEAST ASIA ────────────────
-
-  // Bangladesh / Myanmar coast
-  [[90,22],[91,22],[92,21],[93,20],[94,18],[95,17],[96,16],[97,16],[98,16]],
-
-  // Thailand / Malay Peninsula west
-  [[98,16],[98,14],[98,12],[98,10],[99,8],[100,6],[100,4],[101,3],[102,2],[103,1],[104,1]],
-
-  // Thailand Gulf / Vietnam
-  [[98,16],[100,14],[100,12],[102,10],[104,8],[106,6],[106,8],[106,10],[108,12],[108,14],[108,16],[108,18],[106,20],[106,22],[108,22]],
-
-  // China coast
-  [[108,22],[110,21],[112,22],[114,22],[115,23],[117,24],[118,26],[120,28],[122,30],[122,32],[120,34],[120,36],[119,37],[118,38],[120,38],[121,39],[122,40]],
-
-  // China north coast / Korea bay
-  [[122,40],[121,40],[120,39],[118,38],[116,38],[118,40],[120,40],[121,40],[122,40],[124,40],[126,38]],
-
-  // Korean Peninsula west & south
-  [[126,38],[126,36],[126,34],[127,34],[128,35],[129,35]],
-
-  // Korean Peninsula east
-  [[129,35],[129,36],[129,37],[128,38],[129,39],[130,38],[130,36],[129,35]],
-
-  // Japan — Kyushu
-  [[130,31],[131,32],[131,33],[130,34],[131,34],[132,34]],
-
-  // Japan — Honshu south to north
-  [[132,34],[134,34],[135,34],[136,35],[137,35],[138,35],[139,36],[140,36],[140,38],[140,40],[141,42],[142,43],[143,44],[145,44]],
-
-  // Japan — Hokkaido
-  [[145,44],[145,43],[144,42],[143,42],[142,42],[141,43],[140,43],[140,44],[141,44],[142,44],[143,44]],
-
-  // Japan — Pacific coast return
-  [[145,44],[144,43],[143,42],[142,40],[140,38],[139,36],[138,35],[136,34],[134,33],[132,33],[131,32],[130,31]],
-
-  // Japan — Shikoku
-  [[133,33],[134,34],[135,34],[134,33],[133,33]],
-
-  // Taiwan
-  [[120,22],[121,23],[122,25],[121,25],[120,24],[120,22]],
-
-  // Philippines — Luzon
-  [[120,19],[121,19],[122,18],[122,16],[122,14],[121,14],[120,15],[120,17],[120,19]],
-
-  // Philippines — Visayas / Mindanao
-  [[122,14],[124,12],[126,10],[127,8],[126,7],[125,6],[124,7],[122,8],[122,10],[122,12],[122,14]],
-
-  // Borneo
-  [[109,1],[110,2],[111,2],[112,2],[113,3],[114,4],[115,5],[116,6],[117,7],[118,7],[119,7],[118,6],[118,4],[117,3],[116,1],[115,0],[114,-1],[113,-2],[112,-3],[111,-3],[110,-2],[110,-1],[109,0],[109,1]],
-
-  // Sumatra
-  [[95,6],[96,5],[97,4],[98,3],[99,2],[100,1],[101,0],[102,-1],[103,-2],[104,-3],[105,-5],[106,-6],[105,-6],[104,-5],[103,-4],[102,-3],[101,-2],[100,-1],[99,0],[98,1],[97,2],[96,3],[95,4],[95,6]],
-
-  // Java
-  [[105,-6],[106,-6],[107,-7],[108,-7],[109,-7],[110,-7],[111,-7],[112,-7],[113,-8],[114,-8],[116,-8],[114,-8],[113,-8],[112,-8],[111,-8],[110,-8],[109,-8],[108,-8],[107,-7],[106,-7],[105,-6]],
-
-  // Sulawesi
-  [[119,-4],[120,-3],[121,-2],[122,-1],[123,-1],[124,-2],[124,-3],[122,-4],[121,-5],[120,-6],[119,-5],[119,-4]],
-
-  // Timor
-  [[124,-9],[126,-9],[127,-9],[126,-9],[124,-9]],
-
-  // Papua / New Guinea
-  [[131,-1],[132,-2],[134,-3],[136,-4],[138,-4],[140,-3],[141,-3],[142,-4],[143,-4],[145,-5],[147,-6],[149,-6],[150,-6],[152,-5],[152,-4],[150,-3],[148,-2],[146,-2],[144,-2],[143,-3],[142,-3],[140,-2],[138,-1],[136,-1],[134,-1],[132,0],[131,-1]],
-
-  // ── RUSSIA (East) ─────────────────
-
-  // Russia Arctic coast (Kola to Urals)
-  [[32,70],[34,69],[36,68],[38,68],[40,68],[42,67],[44,68],[48,68],[50,68],[55,68],[58,68],[60,68]],
-
-  // Russia Arctic coast (Urals to Lena)
-  [[60,68],[62,68],[65,69],[68,70],[70,70],[72,71],[75,72],[78,72],[80,72],[82,72],[85,73],[88,73],[90,73],[95,72],[100,72],[105,72],[110,72],[115,73],[120,72]],
-
-  // Russia Arctic coast (Lena to Bering)
-  [[120,72],[122,70],[125,68],[127,65],[128,62],[130,60],[132,58],[135,56],[136,52],[137,48],[138,46],[140,44]],
-
-  // Russia Pacific coast
-  [[140,44],[142,44],[145,44],[148,46],[150,50],[152,54],[155,58],[158,60],[160,62],[162,64],[165,65],[168,65],[170,64],[172,64],[175,65],[180,65]],
-
-  // Kamchatka Peninsula
-  [[155,58],[157,56],[159,54],[160,52],[162,52],[162,55],[160,58],[158,60]],
-
-  // Sakhalin Island
-  [[142,46],[143,48],[143,50],[144,52],[143,54],[142,52],[141,50],[142,48],[142,46]],
-
-  // ── AUSTRALIA & OCEANIA ───────────
-
-  // Australia — full outline
-  [[115,-34],[114,-33],[114,-30],[114,-28],[114,-26],[114,-24],[115,-22],[116,-21],[118,-20],[120,-18],[122,-17],[124,-16],[126,-14],[128,-14],[130,-13],[131,-12],[133,-12],[135,-12],[136,-12],[137,-14],[137,-16],[138,-16],[139,-17],[140,-18],[141,-17],[142,-15],[142,-12],[143,-12],[144,-14],[145,-16],[146,-18],[147,-20],[148,-21],[150,-23],[151,-25],[153,-26],[153,-28],[153,-30],[152,-32],[151,-34],[150,-36],[148,-37],[147,-38],[146,-39],[144,-38],[142,-38],[141,-38],[140,-37],[139,-36],[138,-35],[137,-35],[136,-34],[134,-34],[132,-33],[130,-32],[128,-33],[126,-34],[124,-34],[122,-34],[120,-34],[118,-35],[116,-34],[115,-34]],
-
-  // Australia — Gulf of Carpentaria detail
-  [[136,-12],[136,-14],[137,-16]],
-  [[132,-12],[133,-12]],
-
-  // Tasmania
-  [[145,-40],[146,-41],[148,-42],[148,-43],[147,-44],[146,-44],[145,-43],[144,-42],[145,-40]],
-
-  // New Zealand North Island
-  [[173,-35],[174,-36],[175,-37],[176,-38],[177,-39],[178,-40],[178,-42],[177,-41],[176,-40],[175,-39],[174,-38],[173,-37],[173,-35]],
-
-  // New Zealand South Island
-  [[172,-42],[173,-43],[172,-44],[171,-45],[170,-46],[168,-46],[167,-45],[167,-44],[168,-44],[170,-43],[171,-42],[172,-42]],
-
-  // ── ISLANDS ───────────────────────
-
-  // Iceland
-  [[-24,64],[-22,65],[-20,66],[-18,66],[-16,66],[-15,65],[-14,65],[-14,64],[-16,63],[-18,63],[-20,63],[-22,64],[-24,64]],
-
-  // Svalbard
-  [[12,77],[14,78],[16,79],[18,80],[20,80],[18,79],[16,78],[14,77],[12,77]],
-
-  // Novaya Zemlya
-  [[50,72],[52,74],[54,76],[56,76],[55,74],[53,72],[50,72]],
-
-  // Hawaii (Big Island)
-  [[-156,20],[-155,20],[-155,19],[-156,19],[-156,20]],
-
-  // New Caledonia
-  [[164,-20],[166,-21],[167,-22],[166,-22],[164,-21],[164,-20]],
-
-  // Fiji
-  [[177,-17],[178,-18],[178,-19],[177,-18],[177,-17]],
-];
-
-// ═══════════════════════════════════════
-// REGION & OCEAN LABELS
-// ═══════════════════════════════════════
-
-interface MapLabel {
-  lon: number;
+import {
+  twoline2satrec,
+  propagate,
+  gstime,
+  eciToGeodetic,
+  degreesLat,
+  degreesLong,
+} from "satellite.js";
+
+/* ═══════════════════════════════════════════════════════════════
+   TYPES
+   ═══════════════════════════════════════════════════════════════ */
+
+interface ISSPos {
+  latitude: number;
+  longitude: number;
+  altitude: number;
+  velocity: number;
+}
+interface NewsItem {
+  title: string;
+  source: string;
+  timestamp: string;
+}
+interface Activity {
   lat: number;
+  lon: number;
+  label: string;
+  event_type: string;
+  intensity: number;
+}
+interface SysStats {
+  os: string;
+  hostname: string;
+  uptime_secs: number;
+  cpu_count: number;
+  memory_total_mb: number;
+  memory_used_mb: number;
+  local_ip: string;
+  public_ip: string | null;
+}
+interface SatTLE {
   name: string;
-  type: "continent" | "ocean" | "region" | "country";
+  line1: string;
+  line2: string;
+  group: string;
+}
+interface SatPos {
+  lat: number;
+  lng: number;
+  alt: number;
+  altKm: number;
+  name: string;
+  group: string;
+  velocity?: number;
+}
+interface FlightInfo {
+  icao24: string;
+  callsign: string;
+  origin_country: string;
+  latitude: number;
+  longitude: number;
+  altitude: number;
+  velocity: number;
+  heading: number;
+  on_ground: boolean;
+  vertical_rate: number;
+}
+interface WebcamInfo {
+  id: string;
+  city: string;
+  country: string;
+  lat: number;
+  lng: number;
+  label: string;
+  url: string;
+}
+interface ThreatEvent {
+  id: string;
+  src_ip: string;
+  target: string;
+  attack_type: string;
+  severity: "low" | "medium" | "high" | "critical";
+  time: string;
+}
+interface Props {
+  onClose: () => void;
 }
 
-const MAP_LABELS: MapLabel[] = [
-  // Continents
-  { lon: -100, lat: 48, name: "NORTH AMERICA", type: "continent" },
-  { lon: -58, lat: -15, name: "SOUTH AMERICA", type: "continent" },
-  { lon: 20, lat: 5, name: "AFRICA", type: "continent" },
-  { lon: 15, lat: 52, name: "EUROPE", type: "continent" },
-  { lon: 80, lat: 50, name: "ASIA", type: "continent" },
-  { lon: 134, lat: -25, name: "AUSTRALIA", type: "continent" },
-  { lon: 0, lat: -80, name: "ANTARCTICA", type: "continent" },
+type DashboardMode = "INTEL" | "CYBER" | "SAT" | "FLIGHTS" | "CAMS";
 
-  // Oceans
-  { lon: -150, lat: 25, name: "PACIFIC OCEAN", type: "ocean" },
-  { lon: 170, lat: -30, name: "PACIFIC OCEAN", type: "ocean" },
-  { lon: -35, lat: 25, name: "ATLANTIC OCEAN", type: "ocean" },
-  { lon: -35, lat: -30, name: "S. ATLANTIC", type: "ocean" },
-  { lon: 75, lat: -25, name: "INDIAN OCEAN", type: "ocean" },
-  { lon: 0, lat: 78, name: "ARCTIC OCEAN", type: "ocean" },
-  { lon: -150, lat: -50, name: "SOUTHERN OCEAN", type: "ocean" },
+/* ═══════════════════════════════════════════════════════════════
+   CONSTANTS
+   ═══════════════════════════════════════════════════════════════ */
 
-  // Regions & Countries
-  { lon: -98, lat: 38, name: "USA", type: "country" },
-  { lon: -105, lat: 58, name: "CANADA", type: "country" },
-  { lon: -103, lat: 24, name: "MEXICO", type: "country" },
-  { lon: -85, lat: 14, name: "CENTRAL AM.", type: "region" },
-  { lon: -75, lat: -5, name: "PERU", type: "country" },
-  { lon: -52, lat: -8, name: "BRAZIL", type: "country" },
-  { lon: -64, lat: -35, name: "ARGENTINA", type: "country" },
-  { lon: -70, lat: -22, name: "BOLIVIA", type: "country" },
-  { lon: -68, lat: 5, name: "COLOMBIA", type: "country" },
-  { lon: -66, lat: 8, name: "VENEZUELA", type: "country" },
-  { lon: -72, lat: -32, name: "CHILE", type: "country" },
-  { lon: -42, lat: 72, name: "GREENLAND", type: "region" },
-  { lon: -20, lat: 65, name: "ICELAND", type: "country" },
-  { lon: -4, lat: 40, name: "SPAIN", type: "country" },
-  { lon: 2, lat: 47, name: "FRANCE", type: "country" },
-  { lon: -4, lat: 54, name: "UK", type: "country" },
-  { lon: -8, lat: 53, name: "IRELAND", type: "country" },
-  { lon: 10, lat: 51, name: "GERMANY", type: "country" },
-  { lon: 12, lat: 43, name: "ITALY", type: "country" },
-  { lon: 20, lat: 52, name: "POLAND", type: "country" },
-  { lon: 25, lat: 47, name: "ROMANIA", type: "country" },
-  { lon: 24, lat: 38, name: "GREECE", type: "country" },
-  { lon: 35, lat: 39, name: "TURKEY", type: "country" },
-  { lon: 15, lat: 63, name: "NORWAY", type: "country" },
-  { lon: 18, lat: 60, name: "SWEDEN", type: "country" },
-  { lon: 26, lat: 62, name: "FINLAND", type: "country" },
-  { lon: 37, lat: 56, name: "RUSSIA", type: "country" },
-  { lon: 30, lat: 50, name: "UKRAINE", type: "country" },
-  { lon: 0, lat: 32, name: "MOROCCO", type: "country" },
-  { lon: 8, lat: 30, name: "ALGERIA", type: "country" },
-  { lon: 18, lat: 28, name: "LIBYA", type: "country" },
-  { lon: 30, lat: 27, name: "EGYPT", type: "country" },
-  { lon: 45, lat: 10, name: "SOMALIA", type: "country" },
-  { lon: 38, lat: 8, name: "ETHIOPIA", type: "country" },
-  { lon: 35, lat: -5, name: "TANZANIA", type: "country" },
-  { lon: 25, lat: -3, name: "CONGO", type: "country" },
-  { lon: -5, lat: 8, name: "W. AFRICA", type: "region" },
-  { lon: 25, lat: -28, name: "S. AFRICA", type: "country" },
-  { lon: 47, lat: -19, name: "MADAGASCAR", type: "country" },
-  { lon: 45, lat: 24, name: "SAUDI ARABIA", type: "country" },
-  { lon: 55, lat: 23, name: "UAE", type: "country" },
-  { lon: 53, lat: 32, name: "IRAN", type: "country" },
-  { lon: 44, lat: 34, name: "IRAQ", type: "country" },
-  { lon: 68, lat: 30, name: "PAKISTAN", type: "country" },
-  { lon: 80, lat: 22, name: "INDIA", type: "country" },
-  { lon: 81, lat: 7, name: "SRI LANKA", type: "country" },
-  { lon: 90, lat: 24, name: "BANGLADESH", type: "country" },
-  { lon: 96, lat: 20, name: "MYANMAR", type: "country" },
-  { lon: 101, lat: 15, name: "THAILAND", type: "country" },
-  { lon: 107, lat: 16, name: "VIETNAM", type: "country" },
-  { lon: 104, lat: 5, name: "MALAYSIA", type: "country" },
-  { lon: 115, lat: 1, name: "BORNEO", type: "region" },
-  { lon: 101, lat: -1, name: "SUMATRA", type: "region" },
-  { lon: 110, lat: -7, name: "JAVA", type: "region" },
-  { lon: 121, lat: -3, name: "SULAWESI", type: "region" },
-  { lon: 138, lat: -4, name: "PAPUA", type: "region" },
-  { lon: 122, lat: 14, name: "PHILIPPINES", type: "country" },
-  { lon: 121, lat: 24, name: "TAIWAN", type: "country" },
-  { lon: 105, lat: 35, name: "CHINA", type: "country" },
-  { lon: 128, lat: 37, name: "KOREA", type: "country" },
-  { lon: 138, lat: 37, name: "JAPAN", type: "country" },
-  { lon: 90, lat: 48, name: "MONGOLIA", type: "country" },
-  { lon: 68, lat: 42, name: "KAZAKHSTAN", type: "country" },
-  { lon: 155, lat: 56, name: "KAMCHATKA", type: "region" },
-  { lon: 135, lat: 62, name: "SIBERIA", type: "region" },
-  { lon: 175, lat: -40, name: "NEW ZEALAND", type: "country" },
-  { lon: -75, lat: 20, name: "CARIBBEAN", type: "region" },
-  { lon: 100, lat: -2, name: "INDONESIA", type: "country" },
+const MODE_CONFIG: Record<
+  DashboardMode,
+  { icon: string; label: string; key: string; color: string }
+> = {
+  INTEL: { icon: "📡", label: "INTEL", key: "1", color: "#00ff41" },
+  CYBER: { icon: "⚠", label: "CYBER", key: "2", color: "#ff4444" },
+  SAT: { icon: "🛰", label: "SAT", key: "3", color: "#4488ff" },
+  FLIGHTS: { icon: "✈", label: "FLIGHTS", key: "4", color: "#00d4ff" },
+  CAMS: { icon: "📷", label: "CAMS", key: "5", color: "#ffaa44" },
+};
 
-  // Seas
-  { lon: 35, lat: 35, name: "MEDITERRANEAN", type: "ocean" },
-  { lon: 50, lat: 30, name: "PERSIAN GULF", type: "ocean" },
-  { lon: 40, lat: 20, name: "RED SEA", type: "ocean" },
-  { lon: 35, lat: 44, name: "BLACK SEA", type: "ocean" },
-  { lon: 50, lat: 42, name: "CASPIAN", type: "ocean" },
-  { lon: 88, lat: 14, name: "BAY OF BENGAL", type: "ocean" },
-  { lon: 110, lat: 14, name: "S. CHINA SEA", type: "ocean" },
-  { lon: 140, lat: 30, name: "PACIFIC", type: "ocean" },
-  { lon: -80, lat: 25, name: "GULF OF MEXICO", type: "ocean" },
-  { lon: 18, lat: 58, name: "BALTIC", type: "ocean" },
-  { lon: 4, lat: 56, name: "NORTH SEA", type: "ocean" },
-  { lon: -70, lat: 60, name: "HUDSON BAY", type: "ocean" },
-  { lon: -170, lat: 60, name: "BERING SEA", type: "ocean" },
-  { lon: 140, lat: 55, name: "SEA OF OKHOTSK", type: "ocean" },
-  { lon: 60, lat: -40, name: "INDIAN OCEAN", type: "ocean" },
-  { lon: 135, lat: -10, name: "ARAFURA SEA", type: "ocean" },
-  { lon: 155, lat: -30, name: "TASMAN SEA", type: "ocean" },
+const SAT_GROUPS = [
+  { id: "stations", label: "STATIONS", desc: "ISS, Tiangong, etc." },
+  { id: "starlink", label: "STARLINK", desc: "SpaceX constellation" },
+  { id: "gps", label: "GPS", desc: "Navigation satellites" },
+  { id: "weather", label: "WEATHER", desc: "Meteorological sats" },
+  { id: "oneweb", label: "ONEWEB", desc: "OneWeb constellation" },
+  { id: "iridium", label: "IRIDIUM", desc: "Iridium NEXT" },
+  { id: "geo", label: "GEO", desc: "Geostationary orbit" },
+  { id: "science", label: "SCIENCE", desc: "Scientific missions" },
 ];
 
-// ═══════════════════════════════════════
-// MAJOR CITIES
-// ═══════════════════════════════════════
-
-const CITIES: [number, number, string][] = [
-  [40.7, -74.0, "New York"], [51.5, -0.1, "London"], [35.7, 139.7, "Tokyo"],
-  [22.3, 114.2, "Hong Kong"], [37.8, -122.4, "San Francisco"], [-33.9, 151.2, "Sydney"],
-  [55.8, 37.6, "Moscow"], [1.3, 103.8, "Singapore"], [48.9, 2.4, "Paris"],
-  [52.5, 13.4, "Berlin"], [19.1, 72.9, "Mumbai"], [-23.6, -46.6, "São Paulo"],
-  [39.9, 116.4, "Beijing"], [37.6, 127.0, "Seoul"], [25.0, 55.3, "Dubai"],
-  [30.0, 31.2, "Cairo"], [-1.3, 36.8, "Nairobi"], [33.9, -118.2, "Los Angeles"],
-  [41.9, -87.6, "Chicago"], [49.3, -123.1, "Vancouver"], [59.3, 18.1, "Stockholm"],
-  [28.6, 77.2, "Delhi"], [31.2, 121.5, "Shanghai"], [13.8, 100.5, "Bangkok"],
-  [-34.6, -58.4, "Buenos Aires"], [14.6, 121.0, "Manila"], [64.1, -21.9, "Reykjavik"],
-  [-6.2, 106.8, "Jakarta"], [-37.8, 144.9, "Melbourne"], [43.7, -79.4, "Toronto"],
-  [35.2, -80.8, "Charlotte"], [29.8, -95.4, "Houston"], [25.8, -80.2, "Miami"],
-  [47.6, -122.3, "Seattle"], [38.9, -77.0, "Washington"], [42.4, -71.1, "Boston"],
-  [45.5, -73.6, "Montreal"], [53.5, -6.3, "Dublin"], [41.0, 29.0, "Istanbul"],
-  [23.1, 113.3, "Guangzhou"], [-22.9, -43.2, "Rio de Janeiro"], [6.5, 3.4, "Lagos"],
-  [-33.9, 18.4, "Cape Town"], [35.7, 51.4, "Tehran"], [24.7, 46.7, "Riyadh"],
-  [56.9, 24.1, "Riga"], [59.4, 24.7, "Tallinn"], [60.2, 25.0, "Helsinki"],
-  [50.1, 14.4, "Prague"], [47.5, 19.0, "Budapest"], [44.4, 26.1, "Bucharest"],
-  [40.4, -3.7, "Madrid"], [41.4, 2.2, "Barcelona"], [45.5, 9.2, "Milan"],
-  [41.9, 12.5, "Rome"], [37.0, -122.1, "Silicon Valley"],
+const LIVE_STREAMS = [
+  {
+    id: "aje",
+    label: "AL JAZEERA",
+    tag: "AJE",
+    url: "https://www.youtube-nocookie.com/embed/gCNeDWCI0vo",
+    accent: "#f4a100",
+  },
+  {
+    id: "firstpost",
+    label: "First Post",
+    tag: "First Post",
+    url: "https://www.youtube-nocookie.com/embed/QoMZg-vPesE",
+    accent: "#0055a4",
+  },
+  {
+    id: "dw",
+    label: "DW NEWS",
+    tag: "DW",
+    url: "https://www.youtube-nocookie.com/embed/LuKwFajn37U",
+    accent: "#e3001b",
+  },
+  {
+    id: "wion",
+    label: "WION",
+    tag: "WION",
+    url: "https://www.youtube-nocookie.com/embed/vfszY1JYbMc",
+    accent: "#e3001b",
+  },
 ];
 
-// ═══════════════════════════════════════
-// COMPONENT
-// ═══════════════════════════════════════
+// Public webcams — Update video IDs if streams go offline
+const WEBCAMS: WebcamInfo[] = [
+  { id: "nyc-ts", city: "New York", country: "US", lat: 40.758, lng: -73.985, label: "Times Square", url: "https://www.youtube-nocookie.com/embed/rnXIjl_Rzy4" },
+  { id: "tokyo-shibuya", city: "Tokyo", country: "JP", lat: 35.659, lng: 139.700, label: "Shibuya Crossing", url: "https://www.youtube-nocookie.com/embed/3dfVK7ld38Ys" },
+  { id: "london-eye", city: "London", country: "UK", lat: 51.503, lng: -0.119, label: "London Eye", url: "https://www.youtube-nocookie.com/embed/5XQZt2r8n9o" },
+  { id: "sydney-opera", city: "Sydney", country: "AU", lat: -33.856, lng: 151.215, label: "Sydney Opera House", url: "https://www.youtube-nocookie.com/embed/1aXqj8ZyHkA" },
+  { id: "paris-eiffel", city: "Paris", country: "FR", lat: 48.858, lng: 2.294, label: "Eiffel Tower", url: "https://www.youtube-nocookie.com/embed/2XjvQZyHkA" },
+  
+];
+
+const GLOBE_CITIES = [
+  { lat: 40.71, lng: -74.0, name: "New York", size: 0.3 },
+  { lat: 51.51, lng: -0.13, name: "London", size: 0.3 },
+  { lat: 35.68, lng: 139.69, name: "Tokyo", size: 0.3 },
+  { lat: 22.32, lng: 114.17, name: "Hong Kong", size: 0.25 },
+  { lat: 37.77, lng: -122.42, name: "San Francisco", size: 0.22 },
+  { lat: -33.87, lng: 151.21, name: "Sydney", size: 0.25 },
+  { lat: 55.76, lng: 37.62, name: "Moscow", size: 0.25 },
+  { lat: 1.35, lng: 103.82, name: "Singapore", size: 0.22 },
+  { lat: 48.86, lng: 2.35, name: "Paris", size: 0.25 },
+  { lat: 52.52, lng: 13.41, name: "Berlin", size: 0.22 },
+  { lat: 19.08, lng: 72.88, name: "Mumbai", size: 0.25 },
+  { lat: -23.55, lng: -46.63, name: "São Paulo", size: 0.25 },
+  { lat: 39.9, lng: 116.4, name: "Beijing", size: 0.3 },
+  { lat: 37.57, lng: 126.98, name: "Seoul", size: 0.25 },
+  { lat: 25.2, lng: 55.27, name: "Dubai", size: 0.22 },
+  { lat: 30.04, lng: 31.24, name: "Cairo", size: 0.22 },
+  { lat: 33.94, lng: -118.24, name: "Los Angeles", size: 0.25 },
+  { lat: 28.61, lng: 77.21, name: "Delhi", size: 0.25 },
+  { lat: 31.23, lng: 121.47, name: "Shanghai", size: 0.28 },
+  { lat: 13.76, lng: 100.5, name: "Bangkok", size: 0.22 },
+  { lat: -34.6, lng: -58.38, name: "Buenos Aires", size: 0.22 },
+  { lat: -6.21, lng: 106.85, name: "Jakarta", size: 0.22 },
+  { lat: 41.01, lng: 29.0, name: "Istanbul", size: 0.22 },
+  { lat: 38.9, lng: -77.04, name: "Washington DC", size: 0.2 },
+  { lat: 59.33, lng: 18.07, name: "Stockholm", size: 0.18 },
+  { lat: 60.17, lng: 24.94, name: "Helsinki", size: 0.15 },
+  { lat: 64.13, lng: -21.9, name: "Reykjavik", size: 0.14 },
+];
+
+const ATTACK_TYPES = [
+  "DDoS","SQL_INJ","XSS","BRUTE_FORCE","PORT_SCAN",
+  "MALWARE_C2","PHISHING","ZERO_DAY","RANSOMWARE",
+  "APT","DNS_TUNNEL","EXFIL","RCE","SSRF",
+];
+
+/* ═══════════════════════════════════════════════════════════════
+   HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+
+function randomIP(): string {
+  return `${Math.floor(Math.random() * 223) + 1}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
+}
+
+function generateThreats(count: number): ThreatEvent[] {
+  const severities: ThreatEvent["severity"][] = ["low","medium","high","critical"];
+  return Array.from({ length: count }, () => ({
+    id: Math.random().toString(36).substring(2, 10).toUpperCase(),
+    src_ip: randomIP(),
+    target: GLOBE_CITIES[Math.floor(Math.random() * GLOBE_CITIES.length)].name,
+    attack_type: ATTACK_TYPES[Math.floor(Math.random() * ATTACK_TYPES.length)],
+    severity: severities[Math.floor(Math.random() * severities.length)],
+    time: new Date().toISOString().slice(11, 19),
+  }));
+}
+
+function generateArcs(count: number, threatMode = false) {
+  return Array.from({ length: count }, () => {
+    const from = GLOBE_CITIES[Math.floor(Math.random() * GLOBE_CITIES.length)];
+    let to = from;
+    while (to === from) to = GLOBE_CITIES[Math.floor(Math.random() * GLOBE_CITIES.length)];
+    const isThreat = threatMode ? Math.random() > 0.3 : Math.random() > 0.8;
+    return {
+      startLat: from.lat, startLng: from.lng,
+      endLat: to.lat, endLng: to.lng,
+      color: isThreat
+        ? ["rgba(255,68,68,0.9)", "rgba(255,68,68,0)"]
+        : ["rgba(0,255,65,0.6)", "rgba(0,255,65,0)"],
+      stroke: isThreat ? 0.6 : 0.2,
+    };
+  });
+}
+
+/** Propagate a TLE to current time → geodetic coords */
+function propagateTLE(
+  tle: SatTLE,
+  time?: Date
+): SatPos | null {
+  try {
+    const satrec = twoline2satrec(tle.line1, tle.line2);
+    const now = time || new Date();
+    const result = propagate(satrec, now);
+    if (!result || typeof result.position === "boolean" || !result.position) return null;
+    const gmst = gstime(now);
+    const geo = eciToGeodetic(result.position, gmst);
+
+    const lat = degreesLat(geo.latitude);
+    const lng = degreesLong(geo.longitude);
+    const altKm = geo.height;
+
+    if (isNaN(lat) || isNaN(lng) || isNaN(altKm)) return null;
+
+    return {
+      lat,
+      lng,
+      alt: Math.min(Math.sqrt(altKm / 6371) * 0.35, 0.6),
+      altKm,
+      name: tle.name,
+      group: tle.group,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Compute one full orbit path for a satellite */
+function computeOrbitPath(tle: SatTLE, points = 120): { lat: number; lng: number }[] {
+  try {
+    const satrec = twoline2satrec(tle.line1, tle.line2);
+    const periodMin = (2 * Math.PI) / satrec.no; // minutes
+    const path: { lat: number; lng: number }[] = [];
+    const now = Date.now();
+
+    for (let i = 0; i < points; i++) {
+      const t = (i / points) * periodMin;
+      const time = new Date(now + t * 60000);
+      const result = propagate(satrec, time);
+      if (!result || typeof result.position === "boolean" || !result.position) continue;
+      const gmst = gstime(time);
+      const geo = eciToGeodetic(result.position, gmst);
+      const lat = degreesLat(geo.latitude);
+      const lng = degreesLong(geo.longitude);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        path.push({ lat, lng });
+      }
+    }
+    return path;
+  } catch {
+    return [];
+  }
+}
+
+function altitudeColor(altMeters: number): string {
+  const altKm = altMeters / 1000;
+  if (altKm < 3) return "#00ff41";
+  if (altKm < 6) return "#44ff88";
+  if (altKm < 9) return "#88ffcc";
+  if (altKm < 11) return "#00d4ff";
+  return "#4488ff";
+}
+
+function severityColor(s: string) {
+  switch (s) {
+    case "critical": return "#ff0040";
+    case "high": return "#ff4444";
+    case "medium": return "#ffaa00";
+    default: return "#00ff41";
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   COMPONENT
+   ═══════════════════════════════════════════════════════════════ */
 
 export default function MonitorDashboard(props: Props) {
-  let canvasRef: HTMLCanvasElement | undefined;
-  let animFrame: number;
-  let dataInterval: number;
+  let globeContainerRef!: HTMLDivElement;
+  let globeInstance: any = null;
 
+  // ─── Signals: Core ─────────────────────
+  const [mode, setMode] = createSignal<DashboardMode>("INTEL");
+  const [utc, setUtc] = createSignal("");
+  const [tickerOffset, setTickerOffset] = createSignal(0);
+  const [packetCount, setPacketCount] = createSignal(0);
+  const [globeReady, setGlobeReady] = createSignal(false);
+  const [streamMuted, setStreamMuted] = createSignal(true);
+  const [activeStream, setActiveStream] = createSignal(0);
+
+  // ─── Signals: Data ────────────────────
   const [iss, setISS] = createSignal<ISSPos | null>(null);
   const [news, setNews] = createSignal<NewsItem[]>([]);
   const [stats, setStats] = createSignal<SysStats | null>(null);
   const [activity, setActivity] = createSignal<Activity[]>([]);
   const [publicIp, setPublicIp] = createSignal("...");
-  const [utc, setUtc] = createSignal("");
-  const [tickerOffset, setTickerOffset] = createSignal(0);
+  const [threats, setThreats] = createSignal<ThreatEvent[]>([]);
 
-  // Animation state (not reactive)
-  let radarAngle = 0;
-  let issTrail: { x: number; y: number; age: number }[] = [];
-  let connectionLines: { x1: number; y1: number; x2: number; y2: number; progress: number; speed: number }[] = [];
-  let pulsingDots: { x: number; y: number; phase: number; speed: number }[] = [];
-  let frame = 0;
+  // ─── Signals: Satellites ──────────────
+  const [satGroup, setSatGroup] = createSignal("stations");
+  const [satTLEs, setSatTLEs] = createSignal<SatTLE[]>([]);
+  const [satPositions, setSatPositions] = createSignal<SatPos[]>([]);
+  const [satLoading, setSatLoading] = createSignal(false);
+  const [selectedSat, setSelectedSat] = createSignal<SatPos | null>(null);
+
+  // ─── Signals: Flights ─────────────────
+  const [flights, setFlights] = createSignal<FlightInfo[]>([]);
+  const [flightLoading, setFlightLoading] = createSignal(false);
+  const [selectedFlight, setSelectedFlight] = createSignal<FlightInfo | null>(null);
+
+  // ─── Signals: Webcams ─────────────────
+  const [activeWebcam, setActiveWebcam] = createSignal<WebcamInfo | null>(null);
+
+  // ─── Timer refs ───────────────────────
+  let satPropTimer: number | undefined;
+  let autoRotateResumeTimer: number | undefined;
+
+  /* ═══════════════════════════════════════════════════════════════
+     LIFECYCLE
+     ═══════════════════════════════════════════════════════════════ */
 
   onMount(async () => {
-    fetchAll();
-    dataInterval = window.setInterval(fetchAll, 15000);
-    const issTimer = window.setInterval(fetchISS, 5000);
-
-    const clockTimer = window.setInterval(() => {
-      setUtc(new Date().toISOString().slice(11, 19));
-    }, 1000);
+    // Clocks
     setUtc(new Date().toISOString().slice(11, 19));
+    const clockTimer = setInterval(() => setUtc(new Date().toISOString().slice(11, 19)), 1000);
+    const tickerTimer = setInterval(() => setTickerOffset((o) => o + 1), 40);
+    const packetTimer = setInterval(() => setPacketCount((c) => c + Math.floor(Math.random() * 120 + 10)), 100);
 
-    const tickerTimer = window.setInterval(() => {
-      setTickerOffset((o) => o + 1);
-    }, 50);
+    // Threats
+    setThreats(generateThreats(8));
+    const threatTimer = setInterval(() => {
+      setThreats((prev) => [...generateThreats(1), ...prev].slice(0, 14));
+    }, 5000);
 
-    if (canvasRef) {
-      initCanvas();
-      startRenderLoop();
+    // Data
+    fetchCoreData();
+    const dataTimer = setInterval(fetchCoreData, 20000);
+    const issTimer = setInterval(fetchISS, 5000);
+
+    // Globe
+    try {
+      const { default: Globe } = await import("globe.gl");
+      initGlobe(Globe);
+    } catch (err) {
+      console.error("[FLUX] Globe init failed:", err);
     }
 
+    // Keyboard
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+      if (e.key === "1") switchMode("INTEL");
+      if (e.key === "2") switchMode("CYBER");
+      if (e.key === "3") switchMode("SAT");
+      if (e.key === "4") switchMode("FLIGHTS");
+      if (e.key === "5") switchMode("CAMS");
+      if (e.key === "m" || e.key === "M") setStreamMuted((m) => !m);
+    };
+    window.addEventListener("keydown", onKey);
+
     onCleanup(() => {
-      cancelAnimationFrame(animFrame);
-      clearInterval(dataInterval);
-      clearInterval(issTimer);
       clearInterval(clockTimer);
       clearInterval(tickerTimer);
+      clearInterval(packetTimer);
+      clearInterval(threatTimer);
+      clearInterval(dataTimer);
+      clearInterval(issTimer);
+      if (satPropTimer) clearInterval(satPropTimer);
+      clearTimeout(autoRotateResumeTimer);
+      window.removeEventListener("keydown", onKey);
+      destroyGlobe();
     });
   });
 
-  async function fetchAll() {
+  /* ═══════════════════════════════════════════════════════════════
+     DATA FETCHING
+     ═══════════════════════════════════════════════════════════════ */
+
+  async function fetchCoreData() {
     fetchISS();
-    try { const n = (await invoke("monitor_news")) as NewsItem[]; setNews(n); } catch (_) {}
-    try { const s = (await invoke("monitor_system_stats")) as SysStats; setStats(s); } catch (_) {}
-    try { const a = (await invoke("monitor_activity")) as Activity[]; setActivity(a); } catch (_) {}
-    try { const ip = (await invoke("monitor_public_ip")) as string; setPublicIp(ip); } catch (_) {}
+    try { setNews(await invoke("monitor_news")); } catch {}
+    try { setStats(await invoke("monitor_system_stats")); } catch {}
+    try { setActivity(await invoke("monitor_activity")); } catch {}
+    try { setPublicIp(await invoke("monitor_public_ip")); } catch {}
   }
 
   async function fetchISS() {
-    try { const pos = (await invoke("monitor_iss_position")) as ISSPos; setISS(pos); } catch (_) {}
+    try { setISS(await invoke("monitor_iss_position")); } catch {}
   }
 
-  function initCanvas() {
-    const resize = () => {
-      if (!canvasRef) return;
-      const rect = canvasRef.parentElement!.getBoundingClientRect();
-      canvasRef.width = rect.width * window.devicePixelRatio;
-      canvasRef.height = rect.height * window.devicePixelRatio;
-      canvasRef.style.width = rect.width + "px";
-      canvasRef.style.height = rect.height + "px";
-      initConnections();
-      initPulsingDots();
-    };
-    resize();
-    window.addEventListener("resize", resize);
-    onCleanup(() => window.removeEventListener("resize", resize));
-  }
-
-  function initConnections() {
-    connectionLines = [];
-    for (let i = 0; i < 8; i++) {
-      const a = CITIES[Math.floor(Math.random() * CITIES.length)];
-      let b = CITIES[Math.floor(Math.random() * CITIES.length)];
-      while (b === a) b = CITIES[Math.floor(Math.random() * CITIES.length)];
-      const pa = geoToCanvas(a[0], a[1]);
-      const pb = geoToCanvas(b[0], b[1]);
-      connectionLines.push({
-        x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y,
-        progress: Math.random(),
-        speed: 0.002 + Math.random() * 0.005,
-      });
+  async function fetchSatellites(group: string) {
+    setSatLoading(true);
+    try {
+      const tles: SatTLE[] = await invoke("monitor_fetch_tle", { group });
+      setSatTLEs(tles);
+      propagateAllSats(tles);
+    } catch (err) {
+      console.error("[SAT] Fetch failed:", err);
     }
+    setSatLoading(false);
   }
 
-  function initPulsingDots() {
-    pulsingDots = CITIES.map(([lat, lon]) => {
-      const p = geoToCanvas(lat, lon);
-      return { x: p.x, y: p.y, phase: Math.random() * Math.PI * 2, speed: 0.02 + Math.random() * 0.04 };
+  function propagateAllSats(tles?: SatTLE[]) {
+    const data = tles || satTLEs();
+    const positions = data
+      .map((tle) => propagateTLE(tle))
+      .filter(Boolean) as SatPos[];
+    setSatPositions(positions);
+  }
+
+  async function fetchFlights() {
+    setFlightLoading(true);
+    try {
+      const data: FlightInfo[] = await invoke("monitor_flights");
+      setFlights(data);
+    } catch (err) {
+      console.error("[FLIGHTS] Fetch failed:", err);
+    }
+    setFlightLoading(false);
+  }
+
+    /* ═══════════════════════════════════════════════════════════════
+     GLOBE INTERACTION — Pause spin on touch, resume after idle
+     ═══════════════════════════════════════════════════════════════ */
+
+  function pauseGlobeRotation() {
+    if (!globeInstance) return;
+    globeInstance.controls().autoRotate = false;
+    clearTimeout(autoRotateResumeTimer);
+    autoRotateResumeTimer = window.setTimeout(() => {
+      if (globeInstance) {
+        globeInstance.controls().autoRotate = true;
+        globeInstance.controls().autoRotateSpeed = 0.2;
+      }
+    }, 15000); // resume after 15s idle
+  }
+
+    /* ═══════════════════════════════════════════════════════════════
+     SATELLITE GROUP → ICON + COLOR MAPPING
+     ═══════════════════════════════════════════════════════════════ */
+
+  const SAT_ICON_MAP: Record<string, { icon: string; color: string; label: string }> = {
+    stations:  { icon: "🛰", color: "#ff4466", label: "Station" },
+    starlink:  { icon: "⛓",  color: "#88aaff", label: "Starlink" },
+    gps:       { icon: "📍", color: "#ffcc44", label: "GPS" },
+    weather:   { icon: "🌤", color: "#44ddaa", label: "Weather" },
+    oneweb:    { icon: "◈",  color: "#aa88ff", label: "OneWeb" },
+    iridium:   { icon: "✦",  color: "#44ccff", label: "Iridium" },
+    geo:       { icon: "⊛",  color: "#ff8844", label: "GEO" },
+    science:   { icon: "🔭", color: "#ff66aa", label: "Science" },
+  };
+
+  function getSatVisual(name: string, group: string) {
+    const upper = name.toUpperCase();
+
+    // Special named satellites override group defaults
+    if (upper.includes("ISS") || upper.includes("ZARYA") || upper.includes("UNITY"))
+      return { icon: "🛰", color: "#ff4466", glow: true, size: "lg" };
+    if (upper.includes("TIANGONG"))
+      return { icon: "🛰", color: "#ff8844", glow: true, size: "lg" };
+    if (upper.includes("HUBBLE"))
+      return { icon: "🔭", color: "#cc66ff", glow: true, size: "lg" };
+    if (upper.includes("JAMES WEBB") || upper.includes("JWST"))
+      return { icon: "🔭", color: "#ffaa33", glow: true, size: "lg" };
+    if (upper.includes("GOES"))
+      return { icon: "🌤", color: "#44ddaa", glow: true, size: "md" };
+    if (upper.includes("NOAA"))
+      return { icon: "🌤", color: "#33bbaa", glow: true, size: "md" };
+    if (upper.includes("LANDSAT") || upper.includes("TERRA") || upper.includes("AQUA"))
+      return { icon: "🌍", color: "#44aaff", glow: true, size: "md" };
+    if (upper.includes("TDRS"))
+      return { icon: "📡", color: "#88aaff", glow: false, size: "md" };
+    if (upper.includes("GPS"))
+      return { icon: "📍", color: "#ffcc44", glow: false, size: "sm" };
+    if (upper.includes("COSMOS") || upper.includes("GLONASS"))
+      return { icon: "📍", color: "#ffaa66", glow: false, size: "sm" };
+    if (upper.includes("GALILEO"))
+      return { icon: "📍", color: "#66bbff", glow: false, size: "sm" };
+    if (upper.includes("BEIDOU"))
+      return { icon: "📍", color: "#ff8866", glow: false, size: "sm" };
+    if (upper.includes("STARLINK"))
+      return { icon: "⛓", color: "#88aaff", glow: false, size: "sm" };
+    if (upper.includes("ONEWEB"))
+      return { icon: "◈", color: "#aa88ff", glow: false, size: "sm" };
+    if (upper.includes("IRIDIUM"))
+      return { icon: "✦", color: "#44ccff", glow: false, size: "sm" };
+    if (upper.includes("INTELSAT") || upper.includes("ASTRA"))
+      return { icon: "📡", color: "#ff8844", glow: false, size: "sm" };
+    if (upper.includes("METEOSAT") || upper.includes("METEOR") || upper.includes("FENGYUN"))
+      return { icon: "☁", color: "#55ccaa", glow: false, size: "sm" };
+    if (upper.includes("MOLNIYA") || upper.includes("MERIDIAN"))
+      return { icon: "⊛", color: "#ff6644", glow: false, size: "sm" };
+
+    // Fallback to group default
+    const groupVisual = SAT_ICON_MAP[group] || { icon: "•", color: "#6688aa" };
+    return { ...groupVisual, glow: false, size: "sm" as const };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     MARKER ELEMENT FACTORY
+     ═══════════════════════════════════════════════════════════════ */
+
+  function createMarkerEl(d: any): HTMLDivElement {
+    const el = document.createElement("div");
+
+    switch (d._type) {
+
+      /* ─── FLIGHT ─── */
+      case "flight": {
+        el.className = "fcmd-marker fcmd-marker-flight";
+        const heading = (d.heading ?? 0) - 90;
+        const altFt = d.altitude ? (d.altitude / 0.3048).toFixed(0) : "?";
+        const spdKts = d.velocity ? (d.velocity * 1.944).toFixed(0) : "?";
+        const color = d._color || "#00d4ff";
+
+        el.innerHTML = `
+          <span class="fcmd-marker-plane" style="
+            transform: rotate(${heading}deg);
+            color: ${color};
+            filter: drop-shadow(0 0 4px ${color});
+          ">✈</span>
+        `;
+        el.title = [
+          d.callsign || d.icao24 || "Unknown",
+          `Country: ${d.origin_country || "?"}`,
+          `Alt: ${altFt} ft`,
+          `Speed: ${spdKts} kts`,
+          `Heading: ${d.heading?.toFixed(0) ?? "?"}°`,
+          `V/S: ${d.vertical_rate ? (d.vertical_rate * 196.85).toFixed(0) + " fpm" : "?"}`,
+        ].join("\n");
+        break;
+      }
+
+      /* ─── SATELLITE ─── */
+      case "sat": {
+        const vis = getSatVisual(d.name || "", d.group || "");
+        const sizeClass = vis.size === "lg" ? "lg" : vis.size === "md" ? "md" : "sm";
+
+        el.className = `fcmd-marker fcmd-marker-sat ${sizeClass}${vis.glow ? " glow" : ""}`;
+        el.style.setProperty("--sat-color", vis.color);
+
+        if (sizeClass === "sm" && !vis.glow) {
+          // Small dot only — no label
+          el.innerHTML = `<span class="fcmd-sat-icon-s" style="color:${vis.color}">${vis.icon}</span>`;
+        } else {
+          // Icon + label
+          el.innerHTML = `
+            <span class="fcmd-sat-icon-l" style="color:${vis.color}">${vis.icon}</span>
+            <span class="fcmd-sat-lbl" style="
+              color: ${vis.color};
+              border-color: ${vis.color}33;
+              background: ${vis.color}11;
+            ">${d.name || "?"}</span>
+          `;
+        }
+
+        el.title = [
+          d.name || "Unknown Satellite",
+          `Group: ${(d.group || "?").toUpperCase()}`,
+          `Alt: ${d.altKm ? d.altKm.toFixed(0) + " km" : "?"}`,
+          `Lat: ${d.lat?.toFixed(3) ?? "?"}°`,
+          `Lon: ${d.lng?.toFixed(3) ?? "?"}°`,
+        ].join("\n");
+        break;
+      }
+
+      /* ─── WEBCAM ─── */
+      case "cam": {
+        el.className = "fcmd-marker fcmd-marker-cam";
+        el.innerHTML = `
+          <span class="fcmd-cam-pin">📷</span>
+          <span class="fcmd-cam-lbl">${d.city || d.label || ""}</span>
+        `;
+        el.title = `${d.city || ""} — ${d.label || ""}\n${d.country || ""}`;
+        break;
+      }
+
+      /* ─── ISS BEACON (INTEL mode) ─── */
+      case "iss": {
+        el.className = "fcmd-marker fcmd-marker-iss";
+        el.innerHTML = `
+          <span class="fcmd-iss-ring"></span>
+          <span class="fcmd-iss-icon">🛰</span>
+          <span class="fcmd-iss-tag">ISS</span>
+        `;
+        el.title = "International Space Station";
+        break;
+      }
+
+      default: {
+        el.className = "fcmd-marker";
+        el.innerHTML = "•";
+      }
+    }
+
+    // Click handler — pause rotation + select
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      pauseGlobeRotation();
+      handleMarkerClick(d);
     });
+
+    return el;
   }
 
-  function geoToCanvas(lat: number, lon: number) {
-    if (!canvasRef) return { x: 0, y: 0 };
-    const w = canvasRef.width;
-    const h = canvasRef.height;
-    const x = ((lon + 180) / 360) * w;
-    const y = ((90 - lat) / 180) * h;
-    return { x, y };
-  }
-
-  // ─── Render Loop ──────────────────
-
-  function startRenderLoop() {
-    function render() {
-      if (!canvasRef) return;
-      const ctx = canvasRef.getContext("2d")!;
-      const w = canvasRef.width;
-      const h = canvasRef.height;
-      const dpr = window.devicePixelRatio;
-      frame++;
-
-      ctx.clearRect(0, 0, w, h);
-
-      // ── Background grid ──
-      ctx.strokeStyle = "rgba(0,255,65,0.04)";
-      ctx.lineWidth = dpr;
-      const gridStep = 40 * dpr;
-      for (let x = 0; x < w; x += gridStep) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-      }
-      for (let y = 0; y < h; y += gridStep) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
-
-      // ── Latitude / Longitude lines with labels ──
-      ctx.font = `${8 * dpr}px "JetBrains Mono", monospace`;
-      ctx.textAlign = "left";
-
-      // Major latitude lines
-      const latLines = [-60, -40, -20, 0, 20, 40, 60, 80];
-      for (const lat of latLines) {
-        const p = geoToCanvas(lat, -180);
-        const isEquator = lat === 0;
-        ctx.strokeStyle = isEquator ? "rgba(0,255,65,0.12)" : "rgba(0,255,65,0.06)";
-        ctx.lineWidth = isEquator ? 1.5 * dpr : 0.5 * dpr;
-        ctx.setLineDash(isEquator ? [] : [4 * dpr, 4 * dpr]);
-        ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(w, p.y); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(0,255,65,0.25)";
-        ctx.fillText(`${lat}°`, 4 * dpr, p.y - 2 * dpr);
-      }
-
-      // Major longitude lines
-      const lonLines = [-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150, 180];
-      for (const lon of lonLines) {
-        const p = geoToCanvas(0, lon);
-        const isPM = lon === 0;
-        ctx.strokeStyle = isPM ? "rgba(0,255,65,0.12)" : "rgba(0,255,65,0.06)";
-        ctx.lineWidth = isPM ? 1.5 * dpr : 0.5 * dpr;
-        ctx.setLineDash(isPM ? [] : [4 * dpr, 4 * dpr]);
-        ctx.beginPath(); ctx.moveTo(p.x, 0); ctx.lineTo(p.x, h); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(0,255,65,0.25)";
-        ctx.fillText(`${lon}°`, p.x + 2 * dpr, 10 * dpr);
-      }
-
-      // Tropics & Arctic/Antarctic circles
-      const specialLats = [
-        { lat: 23.44, label: "TROPIC OF CANCER" },
-        { lat: -23.44, label: "TROPIC OF CAPRICORN" },
-        { lat: 66.56, label: "ARCTIC CIRCLE" },
-        { lat: -66.56, label: "ANTARCTIC CIRCLE" },
-      ];
-      for (const { lat, label } of specialLats) {
-        const p = geoToCanvas(lat, -180);
-        ctx.strokeStyle = "rgba(0,255,65,0.05)";
-        ctx.lineWidth = 0.5 * dpr;
-        ctx.setLineDash([2 * dpr, 6 * dpr]);
-        ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(w, p.y); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(0,255,65,0.12)";
-        ctx.font = `${6 * dpr}px "JetBrains Mono", monospace`;
-        ctx.fillText(label, w - ctx.measureText(label).width - 6 * dpr, p.y - 2 * dpr);
-      }
-
-      // ── Draw coastlines ──
-      ctx.strokeStyle = "rgba(0,255,65,0.35)";
-      ctx.lineWidth = 1.2 * dpr;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      for (const path of COASTS) {
-        ctx.beginPath();
-        for (let i = 0; i < path.length; i++) {
-          const p = geoToCanvas(path[i][1], path[i][0]);
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
-        ctx.stroke();
-      }
-
-      // Coastline vertex dots
-      ctx.fillStyle = "rgba(0,255,65,0.2)";
-      for (const path of COASTS) {
-        for (const [lon, lat] of path) {
-          const p = geoToCanvas(lat, lon);
-          ctx.beginPath(); ctx.arc(p.x, p.y, 0.8 * dpr, 0, Math.PI * 2); ctx.fill();
-        }
-      }
-
-      // ── Region & ocean labels ──
-      ctx.textAlign = "center";
-      for (const lbl of MAP_LABELS) {
-        const p = geoToCanvas(lbl.lat, lbl.lon);
-        switch (lbl.type) {
-          case "continent":
-            ctx.fillStyle = "rgba(0,255,65,0.10)";
-            ctx.font = `bold ${12 * dpr}px "JetBrains Mono", monospace`;
-            ctx.fillText(lbl.name, p.x, p.y);
-            break;
-          case "ocean":
-            ctx.fillStyle = "rgba(0,120,255,0.08)";
-            ctx.font = `italic ${9 * dpr}px "JetBrains Mono", monospace`;
-            ctx.fillText(lbl.name, p.x, p.y);
-            break;
-          case "country":
-            ctx.fillStyle = "rgba(0,255,65,0.18)";
-            ctx.font = `${7 * dpr}px "JetBrains Mono", monospace`;
-            ctx.fillText(lbl.name, p.x, p.y);
-            break;
-          case "region":
-            ctx.fillStyle = "rgba(0,255,65,0.14)";
-            ctx.font = `${7 * dpr}px "JetBrains Mono", monospace`;
-            ctx.fillText(lbl.name, p.x, p.y);
-            break;
-        }
-      }
-      ctx.textAlign = "left";
-
-      // ── Pulsing city dots ──
-      for (const dot of pulsingDots) {
-        dot.phase += dot.speed;
-        const pulse = 0.3 + Math.sin(dot.phase) * 0.7;
-        const r = (1.5 + pulse * 2.5) * dpr;
-        ctx.fillStyle = `rgba(0,255,65,${0.15 + pulse * 0.45})`;
-        ctx.shadowColor = "#00ff41";
-        ctx.shadowBlur = 5 * dpr;
-        ctx.beginPath(); ctx.arc(dot.x, dot.y, r, 0, Math.PI * 2); ctx.fill();
-      }
-      ctx.shadowBlur = 0;
-
-      // ── Connection lines ──
-      for (const line of connectionLines) {
-        line.progress += line.speed;
-        if (line.progress > 1) {
-          line.progress = 0;
-          const a = CITIES[Math.floor(Math.random() * CITIES.length)];
-          let b = CITIES[Math.floor(Math.random() * CITIES.length)];
-          while (b === a) b = CITIES[Math.floor(Math.random() * CITIES.length)];
-          const pa = geoToCanvas(a[0], a[1]);
-          const pb = geoToCanvas(b[0], b[1]);
-          line.x1 = pa.x; line.y1 = pa.y; line.x2 = pb.x; line.y2 = pb.y;
-          line.speed = 0.002 + Math.random() * 0.005;
-        }
-
-        const grad = ctx.createLinearGradient(line.x1, line.y1, line.x2, line.y2);
-        const p = line.progress;
-        grad.addColorStop(Math.max(0, p - 0.15), "transparent");
-        grad.addColorStop(p, "rgba(0,255,65,0.6)");
-        grad.addColorStop(Math.min(1, p + 0.02), "transparent");
-        ctx.strokeStyle = grad;
-        ctx.lineWidth = 1 * dpr;
-        ctx.beginPath();
-        ctx.moveTo(line.x1, line.y1);
-        ctx.lineTo(line.x2, line.y2);
-        ctx.stroke();
-
-        // Moving dot
-        const dx = line.x1 + (line.x2 - line.x1) * p;
-        const dy = line.y1 + (line.y2 - line.y1) * p;
-        ctx.fillStyle = "#00ff41";
-        ctx.shadowColor = "#00ff41";
-        ctx.shadowBlur = 8 * dpr;
-        ctx.beginPath(); ctx.arc(dx, dy, 2 * dpr, 0, Math.PI * 2); ctx.fill();
-        ctx.shadowBlur = 0;
-      }
-
-      // ── ISS Position ──
-      const issData = iss();
-      if (issData) {
-        const ip = geoToCanvas(issData.latitude, issData.longitude);
-        issTrail.push({ x: ip.x, y: ip.y, age: 0 });
-        if (issTrail.length > 100) issTrail.shift();
-
-        // Trail
-        for (let i = 0; i < issTrail.length; i++) {
-          const t = issTrail[i];
-          t.age++;
-          const a = 1 - t.age / 100;
-          ctx.fillStyle = `rgba(255,100,100,${a * 0.5})`;
-          ctx.beginPath(); ctx.arc(t.x, t.y, 1 * dpr, 0, Math.PI * 2); ctx.fill();
-        }
-
-        // ISS dot with ring
-        ctx.strokeStyle = "rgba(255,68,68,0.4)";
-        ctx.lineWidth = 1 * dpr;
-        const issRingR = (8 + Math.sin(frame * 0.05) * 3) * dpr;
-        ctx.beginPath(); ctx.arc(ip.x, ip.y, issRingR, 0, Math.PI * 2); ctx.stroke();
-
-        ctx.fillStyle = "#ff4444";
-        ctx.shadowColor = "#ff4444";
-        ctx.shadowBlur = 14 * dpr;
-        ctx.beginPath(); ctx.arc(ip.x, ip.y, 4 * dpr, 0, Math.PI * 2); ctx.fill();
-        ctx.shadowBlur = 0;
-
-        // Label
-        ctx.fillStyle = "#ff4444";
-        ctx.font = `bold ${10 * dpr}px "JetBrains Mono", monospace`;
-        ctx.textAlign = "left";
-        ctx.fillText("ISS", ip.x + 12 * dpr, ip.y - 8 * dpr);
-        ctx.font = `${7 * dpr}px "JetBrains Mono", monospace`;
-        ctx.fillStyle = "rgba(255,100,100,0.7)";
-        ctx.fillText(
-          `${issData.latitude.toFixed(1)}°, ${issData.longitude.toFixed(1)}°`,
-          ip.x + 12 * dpr, ip.y + 2 * dpr
+  function handleMarkerClick(d: any) {
+    const m = mode();
+    if (m === "SAT" && d._type === "sat") {
+      setSelectedSat(d);
+      if (globeInstance) {
+        globeInstance.pointOfView(
+          { lat: d.lat, lng: d.lng, altitude: 1.5 },
+          800
         );
       }
-
-      // ── Radar sweep ──
-      radarAngle += 0.008;
-      const cx = w / 2;
-      const cy = h / 2;
-      const rr = Math.min(w, h) * 0.45;
-
-      // Sweep line
-      const sx = cx + Math.cos(radarAngle) * rr;
-      const sy = cy + Math.sin(radarAngle) * rr;
-      ctx.strokeStyle = "rgba(0,255,65,0.12)";
-      ctx.lineWidth = 1 * dpr;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(sx, sy); ctx.stroke();
-
-      // Sweep glow arc
-      for (let i = 0; i < 30; i++) {
-        const a = radarAngle - i * 0.02;
-        const fade = 1 - i / 30;
-        ctx.strokeStyle = `rgba(0,255,65,${0.04 * fade})`;
-        const ex = cx + Math.cos(a) * rr;
-        const ey = cy + Math.sin(a) * rr;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+    } else if (m === "FLIGHTS" && d._type === "flight") {
+      setSelectedFlight(d);
+      if (globeInstance) {
+        globeInstance.pointOfView(
+          { lat: d.latitude ?? d.lat, lng: d.longitude ?? d.lng, altitude: 1.2 },
+          800
+        );
       }
-
-      animFrame = requestAnimationFrame(render);
+    } else if (m === "CAMS" && d._type === "cam") {
+      setActiveWebcam(d);
+      if (globeInstance) {
+        globeInstance.pointOfView(
+          { lat: d.lat, lng: d.lng, altitude: 1.0 },
+          800
+        );
+      }
     }
-    render();
   }
 
-  // ─── Helpers ──────────────────────
+  /* ═══════════════════════════════════════════════════════════════
+     GLOBE INIT
+     ═══════════════════════════════════════════════════════════════ */
+
+    function initGlobe(Globe: any) {
+    if (!globeContainerRef) return;
+    const w = globeContainerRef.clientWidth;
+    const h = globeContainerRef.clientHeight;
+    if (w === 0 || h === 0) return;
+
+    globeInstance = Globe()
+      .globeImageUrl(
+        "//unpkg.com/three-globe/example/img/earth-night.jpg"
+      )
+      .bumpImageUrl(
+        "//unpkg.com/three-globe/example/img/earth-topology.png"
+      )
+      .backgroundColor("rgba(0,0,0,0)")
+      .showGlobe(true)
+      .showAtmosphere(true)
+      .atmosphereColor("#00c8ff")
+      .atmosphereAltitude(0.15)
+
+      // — Point layer (cities / bulk sat dots) —
+      .pointsData(GLOBE_CITIES)
+      .pointLat("lat")
+      .pointLng("lng")
+      .pointColor((d: any) => d.color || "#00c8ff")
+      .pointAltitude((d: any) => d.alt || 0.01)
+      .pointRadius((d: any) => d.size || d.radius || 0.15)
+      .pointLabel(
+        (d: any) =>
+          `<div class="fcmd-globe-tooltip">${d.name || d.label || ""}</div>`
+      )
+      .onPointClick((p: any) => {
+        pauseGlobeRotation();
+        handleMarkerClick(p);
+      })
+
+      // — Arcs —
+      .arcsData(generateArcs(12))
+      .arcStartLat("startLat")
+      .arcStartLng("startLng")
+      .arcEndLat("endLat")
+      .arcEndLng("endLng")
+      .arcColor("color")
+      .arcDashLength(() => 0.4)
+      .arcDashGap(() => 0.15)
+      .arcDashAnimateTime(() => 1200 + Math.random() * 2500)
+      .arcStroke("stroke")
+
+      // — Rings —
+      .ringsData([])
+      .ringLat("lat")
+      .ringLng("lng")
+      .ringColor(
+        () => (t: number) => `rgba(0,200,255,${1 - t})`
+      )
+      .ringMaxRadius(3)
+      .ringPropagationSpeed(2)
+      .ringRepeatPeriod(1200)
+
+      // — Labels —
+      .labelsData(
+        GLOBE_CITIES.filter((c) => c.size >= 0.25).map(
+          (c) => ({
+            lat: c.lat,
+            lng: c.lng,
+            text: c.name.toUpperCase(),
+            size: c.size,
+          })
+        )
+      )
+      .labelLat("lat")
+      .labelLng("lng")
+      .labelText("text")
+      .labelColor(() => "rgba(140,200,255,0.35)")
+      .labelSize((d: any) => d.size * 1.6)
+      .labelDotRadius((d: any) => d.size * 0.5)
+      .labelDotOrientation(() => "right" as any)
+      .labelResolution(2)
+
+      // — Paths (orbit tracks) —
+      .pathsData([])
+      .pathPointLat("lat")
+      .pathPointLng("lng")
+      .pathColor(() => "rgba(255,68,68,0.35)")
+      .pathStroke(1.2)
+      .pathDashLength(0.01)
+      .pathDashGap(0.004)
+      .pathDashAnimateTime(100000)
+
+      // ★ HTML ELEMENTS layer — custom DOM markers (flights, sats, cams)
+      .htmlElementsData([])
+      .htmlLat((d: any) => d.lat ?? d.latitude ?? 0)
+      .htmlLng((d: any) => d.lng ?? d.longitude ?? 0)
+      .htmlAltitude((d: any) => d._htmlAlt ?? 0)
+      .htmlElement((d: any) => createMarkerEl(d))
+
+      // — Dimensions —
+      .width(w)
+      .height(h)(globeContainerRef);
+
+    // ★ Camera controls — reduced auto-rotate speed
+    const controls = globeInstance.controls();
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.2; // ★ slower
+    controls.enableZoom = true;
+    controls.minDistance = 140;
+    controls.maxDistance = 650;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.12;
+
+    // ★ INTERACTION HANDLERS — pause rotation on user input
+    const onInteract = () => pauseGlobeRotation();
+    globeContainerRef.addEventListener("pointerdown", onInteract);
+    globeContainerRef.addEventListener("wheel", onInteract, {
+      passive: true,
+    });
+    globeContainerRef.addEventListener("touchstart", onInteract, {
+      passive: true,
+    });
+
+    // Initial viewpoint
+    globeInstance.pointOfView(
+      { lat: 20, lng: 10, altitude: 2.2 },
+      1500
+    );
+
+    // Resize observer
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        if (globeInstance && e.contentRect.width > 0) {
+          globeInstance
+            .width(e.contentRect.width)
+            .height(e.contentRect.height);
+        }
+      }
+    });
+    ro.observe(globeContainerRef);
+
+    // Periodic arc refresh
+    const arcsRefresh = setInterval(() => {
+      if (
+        globeInstance &&
+        (mode() === "INTEL" || mode() === "CYBER")
+      ) {
+        globeInstance.arcsData(
+          generateArcs(12, mode() === "CYBER")
+        );
+      }
+    }, 7000);
+
+    setGlobeReady(true);
+
+    (globeContainerRef as any).__cleanup = () => {
+      clearInterval(arcsRefresh);
+      clearTimeout(autoRotateResumeTimer);
+      globeContainerRef.removeEventListener("pointerdown", onInteract);
+      globeContainerRef.removeEventListener("wheel", onInteract);
+      globeContainerRef.removeEventListener("touchstart", onInteract);
+      ro.disconnect();
+    };
+  }
+
+  function destroyGlobe() {
+    if ((globeContainerRef as any)?.__cleanup) (globeContainerRef as any).__cleanup();
+    if (globeInstance) {
+      try {
+        const canvas = globeContainerRef?.querySelector("canvas");
+        if (canvas) {
+          const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+          gl?.getExtension("WEBGL_lose_context")?.loseContext();
+        }
+      } catch {}
+      globeInstance = null;
+    }
+    if (globeContainerRef) {
+      while (globeContainerRef.firstChild) globeContainerRef.removeChild(globeContainerRef.firstChild);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     MODE SWITCHING
+     ═══════════════════════════════════════════════════════════════ */
+
+  function switchMode(newMode: DashboardMode) {
+    const prev = mode();
+    if (prev === newMode) return;
+    setMode(newMode);
+
+    // Cleanup previous mode
+    if (satPropTimer) { clearInterval(satPropTimer); satPropTimer = undefined; }
+    setSelectedSat(null);
+    setSelectedFlight(null);
+    setActiveWebcam(null);
+
+    if (!globeInstance) return;
+
+    switch (newMode) {
+      case "INTEL":
+        configureGlobeINTEL();
+        break;
+      case "CYBER":
+        configureGlobeCYBER();
+        break;
+      case "SAT":
+        configureGlobeSAT();
+        break;
+      case "FLIGHTS":
+        configureGlobeFLIGHTS();
+        break;
+      case "CAMS":
+        configureGlobeCAMS();
+        break;
+    }
+  }
+
+  function configureGlobeINTEL() {
+    if (!globeInstance) return;
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-night.jpg")
+      .atmosphereColor("#3388ff")    // ★ blue-white atmosphere
+      .pointsData(GLOBE_CITIES)
+      .pointColor(() => "#55aaff")   // ★ brighter city dots
+      .pointAltitude(() => 0.01)
+      .pointRadius((d: any) => d.size || 0.15)
+      .arcsData(generateArcs(12))
+      .labelsData(
+        GLOBE_CITIES.filter((c) => c.size >= 0.22).map((c) => ({
+          lat: c.lat, lng: c.lng,
+          text: c.name.toUpperCase(),
+          size: c.size,
+        }))
+      )
+      .labelColor(() => "rgba(180,210,255,0.55)")   // ★ much brighter labels
+      .labelSize((d: any) => (d.size || 0.2) * 2.2) // ★ bigger
+      .labelDotRadius((d: any) => (d.size || 0.2) * 0.6)
+      .labelDotOrientation(() => "right" as any)
+      .pathsData([])
+      .ringsData([])
+      .htmlElementsData([]);
+    globeInstance.controls().autoRotateSpeed = 0.2;
+  }
+
+  function configureGlobeCYBER() {
+    if (!globeInstance) return;
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-night.jpg")
+      .atmosphereColor("#ff2244")
+      .pointsData(GLOBE_CITIES.map((c) => ({ ...c, color: "#ff5577" })))
+      .pointColor((d: any) => d.color || "#ff5577")
+      .pointAltitude(() => 0.01)
+      .pointRadius((d: any) => d.size || 0.15)
+      .arcsData(generateArcs(18, true))
+      .labelsData(
+        GLOBE_CITIES.filter((c) => c.size >= 0.22).map((c) => ({
+          lat: c.lat, lng: c.lng,
+          text: c.name.toUpperCase(),
+          size: c.size,
+        }))
+      )
+      .labelColor(() => "rgba(255,150,170,0.55)")   // ★ visible red-ish labels
+      .labelSize((d: any) => (d.size || 0.2) * 2.2)
+      .labelDotRadius((d: any) => (d.size || 0.2) * 0.6)
+      .pathsData([])
+      .ringsData(
+        activity().slice(0, 6).map((a) => ({ lat: a.lat, lng: a.lon }))
+      )
+      .ringColor(() => (t: number) => `rgba(255,68,68,${1 - t})`)
+      .htmlElementsData([]);
+    globeInstance.controls().autoRotateSpeed = 0.1;
+  }
+
+  function configureGlobeSAT() {
+    if (!globeInstance) return;
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-night.jpg")
+      .atmosphereColor("#4488ff")
+      .arcsData([])
+      .labelsData([])
+      .pathsData([])
+      .ringsData([])
+      .htmlElementsData([]);
+    globeInstance.controls().autoRotateSpeed = 0.25;
+    fetchSatellites(satGroup());
+    if (satPropTimer) clearInterval(satPropTimer);
+    satPropTimer = window.setInterval(() => propagateAllSats(), 2000);
+  }
+
+  function configureGlobeFLIGHTS() {
+    if (!globeInstance) return;
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-blue-marble.jpg")
+      .atmosphereColor("#55bbff")
+      .arcsData([])
+      .labelsData(
+        GLOBE_CITIES.filter((c) => c.size >= 0.25).map((c) => ({
+          lat: c.lat, lng: c.lng,
+          text: c.name.toUpperCase(),
+          size: c.size,
+        }))
+      )
+      .labelColor(() => "rgba(180,220,255,0.4)")  // ★ visible city names on blue marble
+      .labelSize((d: any) => (d.size || 0.2) * 2)
+      .labelDotRadius(() => 0)
+      .pathsData([])
+      .ringsData([])
+      .pointsData([])
+      .htmlElementsData([]);
+    globeInstance.controls().autoRotateSpeed = 0.15;
+    fetchFlights();
+  }
+
+  function configureGlobeCAMS() {
+    if (!globeInstance) return;
+    const camMarkers = WEBCAMS.map((w) => ({
+      ...w,
+      _type: "cam" as const,
+      _htmlAlt: 0.01,
+    }));
+    globeInstance
+      .globeImageUrl("//unpkg.com/three-globe/example/img/earth-blue-marble.jpg")
+      .atmosphereColor("#ff9944")
+      .pointsData([])
+      .arcsData([])
+      .labelsData([])
+      .pathsData([])
+      .ringsData(WEBCAMS.map((c) => ({ lat: c.lat, lng: c.lng })))
+      .ringColor(() => (t: number) => `rgba(255,170,68,${1 - t})`)
+      .ringMaxRadius(2)
+      .ringRepeatPeriod(2200)
+      .htmlElementsData(camMarkers);
+    globeInstance.controls().autoRotateSpeed = 0.1;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     REACTIVE GLOBE UPDATES
+     ═══════════════════════════════════════════════════════════════ */
+
+  // ISS on globe (INTEL / CYBER modes)
+    // ★ ISS on globe (INTEL / CYBER modes)
+  createEffect(() => {
+    const m = mode();
+    const issData = iss();
+    if (!globeInstance || (m !== "INTEL" && m !== "CYBER")) return;
+
+    if (issData) {
+      const cityColor = m === "CYBER" ? "#ff4466" : "#00c8ff";
+      const issPoint = {
+        lat: issData.latitude,
+        lng: issData.longitude,
+        name: "ISS",
+        size: 0.5,
+        color: "#ff4444",
+        alt: 0.06,
+      };
+      globeInstance.pointsData([
+        ...GLOBE_CITIES.map((c) => ({
+          ...c,
+          color: cityColor,
+          alt: 0.01,
+        })),
+        issPoint,
+      ]);
+      globeInstance.ringsData([
+        { lat: issData.latitude, lng: issData.longitude },
+        ...activity()
+          .slice(0, 4)
+          .map((a) => ({ lat: a.lat, lng: a.lon })),
+      ]);
+
+      // ★ HTML marker for ISS label
+      globeInstance.htmlElementsData([
+        {
+          lat: issData.latitude,
+          lng: issData.longitude,
+          _type: "iss",
+          _htmlAlt: 0.07,
+          name: "ISS",
+        },
+      ]);
+    }
+  });
+
+  // ★ Satellites on globe — uses htmlElementsData for icons
+    // ★ Satellites on globe
+  createEffect(() => {
+    if (mode() !== "SAT" || !globeInstance) return;
+    const positions = satPositions();
+    if (!positions.length) return;
+
+    const currentGroup = satGroup();
+    const groupVisual = SAT_ICON_MAP[currentGroup] || { color: "#6688aa" };
+
+    // Point layer for bulk dots
+    const points = positions.map((s) => {
+      const vis = getSatVisual(s.name, s.group);
+      return {
+        lat: s.lat,
+        lng: s.lng,
+        alt: s.alt,
+        name: s.name,
+        altKm: s.altKm,
+        group: s.group,
+        size: s.name.includes("ISS") ? 0.4 : 0.04,
+        radius: s.name.includes("ISS") ? 0.4 : 0.04,
+        color: vis.color,
+        _type: "sat",
+      };
+    });
+    globeInstance.pointsData(points);
+    globeInstance.pointAltitude((d: any) => d.alt || 0.01);
+    globeInstance.pointRadius((d: any) => d.radius || 0.04);
+
+    // HTML markers — notable sats get full icon + label
+    const notableKeywords = [
+      "ISS", "ZARYA", "TIANGONG", "HUBBLE", "JWST", "JAMES WEBB",
+      "GOES", "NOAA", "LANDSAT", "TERRA", "AQUA", "TDRS",
+      "METEOSAT", "FENGYUN",
+    ];
+
+    const notable = positions.filter((s) =>
+      notableKeywords.some((kw) => s.name.toUpperCase().includes(kw))
+    );
+
+    // Also include first few of each group for visual variety
+    const firstFew = positions
+      .filter((s) => !notable.find((n) => n.name === s.name))
+      .slice(0, Math.min(30, positions.length));
+
+    const selSat = selectedSat();
+    const markerData: any[] = [];
+
+    // Notable sats — full markers
+    for (const s of notable) {
+      markerData.push({
+        lat: s.lat,
+        lng: s.lng,
+        _type: "sat",
+        _htmlAlt: s.alt + 0.01,
+        name: s.name,
+        altKm: s.altKm,
+        group: s.group,
+        alt: s.alt,
+      });
+    }
+
+    // Representative sample — small markers
+    for (const s of firstFew) {
+      markerData.push({
+        lat: s.lat,
+        lng: s.lng,
+        _type: "sat",
+        _htmlAlt: s.alt + 0.005,
+        name: s.name,
+        altKm: s.altKm,
+        group: s.group,
+        alt: s.alt,
+      });
+    }
+
+    // Selected satellite always gets a marker
+    if (selSat && !markerData.find((m) => m.name === selSat.name)) {
+      markerData.push({
+        lat: selSat.lat,
+        lng: selSat.lng,
+        _type: "sat",
+        _htmlAlt: selSat.alt + 0.015,
+        name: selSat.name,
+        altKm: selSat.altKm,
+        group: selSat.group,
+        alt: selSat.alt,
+      });
+    }
+
+    globeInstance.htmlElementsData(markerData);
+    globeInstance.labelsData([]);
+
+    // Orbit path
+    const satForOrbit =
+      selSat || positions.find((s) => s.name.toUpperCase().includes("ISS"));
+    if (satForOrbit) {
+      const tle = satTLEs().find((t) => t.name === satForOrbit.name);
+      if (tle) {
+        const vis = getSatVisual(satForOrbit.name, satForOrbit.group);
+        const orbit = computeOrbitPath(tle, 150);
+        globeInstance.pathsData(orbit.length > 2 ? [orbit] : []);
+        globeInstance.pathColor(() =>
+          `${vis.color}44`
+        );
+        globeInstance.pathStroke(1.5);
+      }
+    }
+  });
+
+  // ★ Flights on globe — uses htmlElementsData for airplane icons
+  createEffect(() => {
+    if (mode() !== "FLIGHTS" || !globeInstance) return;
+    const f = flights();
+    if (!f.length) return;
+
+    // ★ Use HTML markers with airplane icons (cap at 200 for perf)
+    const flightMarkers = f.slice(0, 200).map((fl) => ({
+      lat: fl.latitude,
+      lng: fl.longitude,
+      _type: "flight" as const,
+      _htmlAlt: Math.min(fl.altitude / 600000, 0.15),
+      _color: altitudeColor(fl.altitude),
+      callsign: fl.callsign,
+      icao24: fl.icao24,
+      origin_country: fl.origin_country,
+      altitude: fl.altitude,
+      velocity: fl.velocity,
+      heading: fl.heading,
+      vertical_rate: fl.vertical_rate,
+      latitude: fl.latitude,
+      longitude: fl.longitude,
+    }));
+
+    globeInstance.htmlElementsData(flightMarkers);
+
+    // Points layer OFF for flights (using HTML markers)
+    globeInstance.pointsData([]);
+    globeInstance.labelsData([]);
+
+    // Ring on selected
+    const sel = selectedFlight();
+    if (sel) {
+      globeInstance.ringsData([
+        { lat: sel.latitude, lng: sel.longitude },
+      ]);
+      globeInstance.ringColor(
+        () => (t: number) => `rgba(0,212,255,${1 - t})`
+      );
+    } else {
+      globeInstance.ringsData([]);
+    }
+  });
+
+  // When satellite group changes
+  createEffect(() => {
+    const group = satGroup();
+    if (mode() === "SAT") {
+      fetchSatellites(group);
+    }
+  });
+
+  /* ═══════════════════════════════════════════════════════════════
+     HELPERS
+     ═══════════════════════════════════════════════════════════════ */
 
   function tzTime(offset: number) {
     const d = new Date();
-    d.setUTCHours(d.getUTCHours() + offset);
-    return d.toISOString().slice(11, 16);
+    d.setMinutes(d.getMinutes() + d.getTimezoneOffset() + offset * 60);
+    return d.toTimeString().slice(0, 5);
   }
 
   function formatUptime(secs: number) {
@@ -894,124 +1248,546 @@ export default function MonitorDashboard(props: Props) {
     return d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
   }
 
+  function memPercent() {
+    const s = stats();
+    return s ? Math.round((s.memory_used_mb / s.memory_total_mb) * 100) : 0;
+  }
+
+  function threatLevel() {
+    const t = threats();
+    const c = t.filter((x) => x.severity === "critical").length;
+    const h = t.filter((x) => x.severity === "high").length;
+    if (c > 1) return { text: "CRITICAL", color: "#ff0040" };
+    if (c > 0 || h > 2) return { text: "HIGH", color: "#ff4444" };
+    if (h > 0) return { text: "ELEVATED", color: "#ffaa00" };
+    return { text: "NORMAL", color: "#00ff41" };
+  }
+
   const tickerText = () => {
     const items = news();
-    if (!items.length) return "  >>>  FLUX MONITOR — LOADING FEEDS...  <<<  ";
-    return items.map((n) => `  ▸ ${n.title}  [${n.source}]  `).join("  ◈  ");
+    if (!items.length) return "  ▸▸▸  FLUX CYBER COMMAND — ENCRYPTED CHANNEL ACTIVE — MONITORING ALL SECTORS  ◈  ";
+    return items.map((n) => `  ▸ ${n.title.toUpperCase()}  [${n.source}]  `).join("  ◈  ");
   };
 
+  const streamUrl = () => {
+    const s = LIVE_STREAMS[activeStream()];
+    return `${s.url}?autoplay=1&mute=${streamMuted() ? 1 : 0}&controls=0&modestbranding=1&rel=0`;
+  };
+
+  const webcamUrl = () => {
+    const cam = activeWebcam();
+    if (!cam) return "";
+    return `${cam.url}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0`;
+  };
+
+  /* ═══════════════════════════════════════════════════════════════
+     JSX
+     ═══════════════════════════════════════════════════════════════ */
+
   return (
-    <div class="monitor-overlay" onClick={() => props.onClose()}>
-      <div class="monitor-dashboard" onClick={(e) => e.stopPropagation()}>
+    <div class="fcmd-overlay" onClick={() => props.onClose()}>
+      <div class="fcmd-dashboard" onClick={(e) => e.stopPropagation()}>
+        <div class="fcmd-scanlines" />
+        <div class="fcmd-vignette" />
 
-        {/* ── Top Bar ── */}
-        <div class="monitor-topbar">
-          <div class="monitor-topbar-left">
-            <span class="monitor-logo">⚡ FLUX MONITOR</span>
-            <span class="monitor-status-dot" />
-            <span class="monitor-status-text">LIVE</span>
+        {/* ═══ TOP BAR ═══════════════════════════════════════════ */}
+        <header class="fcmd-topbar">
+          <div class="fcmd-topbar-section">
+            <span class="fcmd-logo">⚡ FLUX COMMAND</span>
+            <span class="fcmd-live-badge"><span class="fcmd-live-dot" />LIVE</span>
+            <span class="fcmd-threat-badge" style={{ color: threatLevel().color }}>
+              THREAT: {threatLevel().text}
+            </span>
           </div>
-          <div class="monitor-topbar-center">
-            <div class="monitor-clock-group">
-              <div class="monitor-tz"><span class="monitor-tz-label">UTC</span><span class="monitor-tz-time">{utc()}</span></div>
-              <div class="monitor-tz"><span class="monitor-tz-label">NYC</span><span class="monitor-tz-time">{tzTime(-5)}</span></div>
-              <div class="monitor-tz"><span class="monitor-tz-label">LON</span><span class="monitor-tz-time">{tzTime(0)}</span></div>
-              <div class="monitor-tz"><span class="monitor-tz-label">TYO</span><span class="monitor-tz-time">{tzTime(9)}</span></div>
-              <div class="monitor-tz"><span class="monitor-tz-label">SYD</span><span class="monitor-tz-time">{tzTime(11)}</span></div>
+
+          {/* Mode Tabs */}
+          <nav class="fcmd-mode-tabs">
+            <For each={Object.entries(MODE_CONFIG)}>
+              {([key, cfg]) => (
+                <button
+                  class={`fcmd-mode-tab ${mode() === key ? "active" : ""}`}
+                  onClick={() => switchMode(key as DashboardMode)}
+                  style={{ "--mode-color": cfg.color }}
+                  title={`${cfg.label} (${cfg.key})`}
+                >
+                  <span class="fcmd-mode-icon">{cfg.icon}</span>
+                  <span class="fcmd-mode-label">{cfg.label}</span>
+                  <span class="fcmd-mode-key">{cfg.key}</span>
+                </button>
+              )}
+            </For>
+          </nav>
+
+          <div class="fcmd-topbar-section">
+            <div class="fcmd-clocks">
+              {[
+                { l: "UTC", o: 0 }, { l: "NYC", o: -5 },
+                { l: "LON", o: 0 }, { l: "TYO", o: 9 },
+              ].map((tz) => (
+                <div class="fcmd-clock">
+                  <span class="fcmd-clock-label">{tz.l}</span>
+                  <span class="fcmd-clock-time">
+                    {tz.l === "UTC" ? utc() : tzTime(tz.o)}
+                  </span>
+                </div>
+              ))}
             </div>
+            <span class="fcmd-packets">PKT: {packetCount().toLocaleString()}</span>
+            <span class="fcmd-close" onClick={() => props.onClose()}>✕</span>
           </div>
-          <div class="monitor-topbar-right">
-            <span class="monitor-close" onClick={() => props.onClose()}>✕ ESC</span>
-          </div>
-        </div>
+        </header>
 
-        {/* ── Main Content ── */}
-        <div class="monitor-main">
+        {/* ═══ MAIN CONTENT ══════════════════════════════════════ */}
+        <main class="fcmd-main">
 
-          {/* Left Panel */}
-          <div class="monitor-side monitor-left">
-            <div class="monitor-panel">
-              <div class="monitor-panel-title">⊞ SYSTEM</div>
-              <Show when={stats()} fallback={<div class="monitor-dim">Loading...</div>}>
-                <div class="monitor-kv"><span>HOST</span><span>{stats()!.hostname}</span></div>
-                <div class="monitor-kv"><span>OS</span><span>{stats()!.os}</span></div>
-                <div class="monitor-kv"><span>CPU</span><span>{stats()!.cpu_count} cores</span></div>
-                <div class="monitor-kv"><span>MEM</span><span>{stats()!.memory_used_mb}/{stats()!.memory_total_mb} MB</span></div>
-                <div class="monitor-kv"><span>UP</span><span>{formatUptime(stats()!.uptime_secs)}</span></div>
-                <div class="monitor-kv"><span>LAN</span><span>{stats()!.local_ip}</span></div>
-                <div class="monitor-kv"><span>WAN</span><span>{publicIp()}</span></div>
+          {/* ─── LEFT PANEL ─────────────────────────────────────── */}
+          <aside class="fcmd-panel-col fcmd-left">
+
+            {/* System Panel — always visible */}
+            <section class="fcmd-panel">
+              <h3 class="fcmd-panel-hdr">⊞ SYSTEM</h3>
+              <Show when={stats()} fallback={<div class="fcmd-dim">Loading...</div>}>
+                <div class="fcmd-kv"><span>HOST</span><span>{stats()!.hostname}</span></div>
+                <div class="fcmd-kv"><span>OS</span><span>{stats()!.os}</span></div>
+                <div class="fcmd-kv"><span>CPU</span><span>{stats()!.cpu_count} cores</span></div>
+                <div class="fcmd-kv"><span>RAM</span><span>{stats()!.memory_used_mb}/{stats()!.memory_total_mb} MB</span></div>
+                <div class="fcmd-progress-bar">
+                  <div class="fcmd-progress-fill" style={{
+                    width: `${memPercent()}%`,
+                    background: memPercent() > 80 ? "#ff4444" : "#00ff41",
+                  }} />
+                </div>
+                <div class="fcmd-kv"><span>UPTIME</span><span>{formatUptime(stats()!.uptime_secs)}</span></div>
+                <div class="fcmd-kv"><span>LAN</span><span class="fcmd-mono">{stats()!.local_ip}</span></div>
+                <div class="fcmd-kv"><span>WAN</span><span class="fcmd-mono">{publicIp()}</span></div>
               </Show>
-            </div>
+            </section>
 
-            <div class="monitor-panel">
-              <div class="monitor-panel-title">🛰 ISS TRACKER</div>
-              <Show when={iss()} fallback={<div class="monitor-dim">Acquiring...</div>}>
-                <div class="monitor-kv"><span>LAT</span><span class="monitor-accent">{iss()!.latitude.toFixed(2)}°</span></div>
-                <div class="monitor-kv"><span>LON</span><span class="monitor-accent">{iss()!.longitude.toFixed(2)}°</span></div>
-                <div class="monitor-kv"><span>ALT</span><span>{iss()!.altitude.toFixed(0)} km</span></div>
-                <div class="monitor-kv"><span>VEL</span><span>{iss()!.velocity.toFixed(0)} km/h</span></div>
+            {/* ISS Panel — always visible */}
+            <section class="fcmd-panel">
+              <h3 class="fcmd-panel-hdr">🛰 ISS TRACKER</h3>
+              <Show when={iss()} fallback={<div class="fcmd-dim">Acquiring...</div>}>
+                <div class="fcmd-kv"><span>LAT</span><span class="fcmd-val-cyan">{iss()!.latitude.toFixed(4)}°</span></div>
+                <div class="fcmd-kv"><span>LON</span><span class="fcmd-val-cyan">{iss()!.longitude.toFixed(4)}°</span></div>
+                <div class="fcmd-kv"><span>ALT</span><span>{iss()!.altitude.toFixed(0)} km</span></div>
+                <div class="fcmd-kv"><span>VEL</span><span>{iss()!.velocity.toFixed(0)} km/h</span></div>
               </Show>
-            </div>
+            </section>
 
-            <div class="monitor-panel">
-              <div class="monitor-panel-title">⚡ ACTIVITY</div>
-              <div class="monitor-activity-list">
-                <For each={activity().slice(0, 8)}>
-                  {(a) => (
-                    <div class="monitor-activity-item">
-                      <span class="monitor-activity-dot" style={{ opacity: a.intensity }} />
-                      <span class="monitor-activity-city">{a.label}</span>
-                      <span class="monitor-activity-type">{a.event_type}</span>
-                    </div>
-                  )}
-                </For>
+            {/* ── Mode-Specific Left Content ── */}
+
+            {/* INTEL / CYBER: Threat Feed */}
+            <Show when={mode() === "INTEL" || mode() === "CYBER"}>
+              <section class="fcmd-panel fcmd-panel-grow">
+                <h3 class="fcmd-panel-hdr">⚠ THREAT FEED</h3>
+                <div class="fcmd-threat-list">
+                  <For each={threats().slice(0, 10)}>
+                    {(t) => (
+                      <div class="fcmd-threat-row">
+                        <span class="fcmd-threat-sev" style={{ background: severityColor(t.severity) }} />
+                        <span class="fcmd-threat-type">{t.attack_type}</span>
+                        <span class="fcmd-threat-detail">
+                          <span class="fcmd-dim">{t.src_ip}</span>
+                          <span class="fcmd-threat-arrow">→</span>
+                          <span>{t.target}</span>
+                        </span>
+                        <span class="fcmd-threat-time">{t.time}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </section>
+            </Show>
+
+            {/* SAT: Satellite Groups & Info */}
+            <Show when={mode() === "SAT"}>
+              <section class="fcmd-panel">
+                <h3 class="fcmd-panel-hdr">📡 SAT GROUP</h3>
+                <div class="fcmd-sat-groups">
+                  <For each={SAT_GROUPS}>
+                    {(g) => (
+                      <button
+                        class={`fcmd-sat-group-btn ${satGroup() === g.id ? "active" : ""}`}
+                        onClick={() => setSatGroup(g.id)}
+                      >
+                        <span>{g.label}</span>
+                        <span class="fcmd-dim">{g.desc}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </section>
+              <section class="fcmd-panel">
+                <h3 class="fcmd-panel-hdr">📊 STATUS</h3>
+                <Show when={satLoading()}>
+                  <div class="fcmd-dim">Fetching TLE data...</div>
+                </Show>
+                <Show when={!satLoading()}>
+                  <div class="fcmd-kv"><span>GROUP</span><span>{satGroup().toUpperCase()}</span></div>
+                  <div class="fcmd-kv"><span>TLEs</span><span>{satTLEs().length}</span></div>
+                  <div class="fcmd-kv"><span>TRACKED</span><span class="fcmd-val-cyan">{satPositions().length}</span></div>
+                  <div class="fcmd-kv"><span>SOURCE</span><span class="fcmd-dim">CelesTrak</span></div>
+                </Show>
+              </section>
+              <Show when={selectedSat()}>
+                <section class="fcmd-panel">
+                  <h3 class="fcmd-panel-hdr">🎯 SELECTED</h3>
+                  <div class="fcmd-kv"><span>NAME</span><span class="fcmd-val-cyan">{selectedSat()!.name}</span></div>
+                  <div class="fcmd-kv"><span>LAT</span><span>{selectedSat()!.lat.toFixed(3)}°</span></div>
+                  <div class="fcmd-kv"><span>LON</span><span>{selectedSat()!.lng.toFixed(3)}°</span></div>
+                  <div class="fcmd-kv"><span>ALT</span><span>{selectedSat()!.altKm.toFixed(0)} km</span></div>
+                  <button class="fcmd-btn" onClick={() => setSelectedSat(null)}>DESELECT</button>
+                </section>
+              </Show>
+               <section class="fcmd-panel fcmd-panel-grow">
+                <h3 class="fcmd-panel-hdr">🗒 SAT LIST</h3>
+                <div class="fcmd-scroll-list">
+                  <For each={satPositions().slice(0, 50)}>
+                    {(s) => {
+                      const vis = getSatVisual(s.name, s.group);
+                      return (
+                        <div
+                          class={`fcmd-list-row ${selectedSat()?.name === s.name ? "selected" : ""}`}
+                          onClick={() => {
+                            setSelectedSat(s);
+                            pauseGlobeRotation();
+                            if (globeInstance) {
+                              globeInstance.pointOfView(
+                                { lat: s.lat, lng: s.lng, altitude: 1.5 },
+                                800
+                              );
+                            }
+                          }}
+                        >
+                          <span class="fcmd-list-icon" style={{ color: vis.color }}>
+                            {vis.icon}
+                          </span>
+                          <span class="fcmd-list-name">{s.name}</span>
+                          <span class="fcmd-list-val">{s.altKm.toFixed(0)}km</span>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </section>
+            </Show>
+
+            {/* FLIGHTS: Flight Stats & List */}
+            <Show when={mode() === "FLIGHTS"}>
+              <section class="fcmd-panel">
+                <h3 class="fcmd-panel-hdr">📊 FLIGHT DATA</h3>
+                <Show when={flightLoading()}>
+                  <div class="fcmd-dim">Contacting OpenSky Network...</div>
+                </Show>
+                <Show when={!flightLoading()}>
+                  <div class="fcmd-kv"><span>AIRBORNE</span><span class="fcmd-val-cyan">{flights().length}</span></div>
+                  <div class="fcmd-kv"><span>SOURCE</span><span class="fcmd-dim">OpenSky Network</span></div>
+                  <div class="fcmd-kv">
+                    <span>TOP ORIGIN</span>
+                    <span>{(() => {
+                      const counts: Record<string, number> = {};
+                      flights().forEach((f) => { counts[f.origin_country] = (counts[f.origin_country] || 0) + 1; });
+                      return Object.entries(counts).sort((a, b) => b[1] - a[1])?.[0]?.[0] || "—";
+                    })()}</span>
+                  </div>
+                </Show>
+                <button class="fcmd-btn" onClick={fetchFlights} style={{ "margin-top": "6px" }}>
+                  ↻ REFRESH
+                </button>
+              </section>
+              <Show when={selectedFlight()}>
+                <section class="fcmd-panel">
+                  <h3 class="fcmd-panel-hdr">🎯 SELECTED</h3>
+                  <div class="fcmd-kv"><span>CALL</span><span class="fcmd-val-cyan">{selectedFlight()!.callsign || "N/A"}</span></div>
+                  <div class="fcmd-kv"><span>ICAO</span><span>{selectedFlight()!.icao24}</span></div>
+                  <div class="fcmd-kv"><span>ORIGIN</span><span>{selectedFlight()!.origin_country}</span></div>
+                  <div class="fcmd-kv"><span>ALT</span><span>{(selectedFlight()!.altitude / 0.3048).toFixed(0)} ft</span></div>
+                  <div class="fcmd-kv"><span>SPD</span><span>{(selectedFlight()!.velocity * 1.944).toFixed(0)} kts</span></div>
+                  <div class="fcmd-kv"><span>HDG</span><span>{selectedFlight()!.heading.toFixed(0)}°</span></div>
+                  <div class="fcmd-kv"><span>V/S</span><span>{(selectedFlight()!.vertical_rate * 196.85).toFixed(0)} fpm</span></div>
+                  <button class="fcmd-btn" onClick={() => setSelectedFlight(null)}>DESELECT</button>
+                </section>
+              </Show>
+              <section class="fcmd-panel fcmd-panel-grow">
+                <h3 class="fcmd-panel-hdr">✈ FLIGHT LIST</h3>
+                <div class="fcmd-scroll-list">
+                  <For each={flights().slice(0, 80)}>
+                    {(f) => (
+                      <div
+                        class={`fcmd-list-row ${selectedFlight()?.icao24 === f.icao24 ? "selected" : ""}`}
+                        onClick={() => {
+                          setSelectedFlight(f);
+                          if (globeInstance) {
+                            globeInstance.pointOfView({ lat: f.latitude, lng: f.longitude, altitude: 1.2 }, 600);
+                          }
+                        }}
+                      >
+                        <span class="fcmd-list-dot" style={{ background: altitudeColor(f.altitude) }} />
+                        <span class="fcmd-list-name">{f.callsign || f.icao24}</span>
+                        <span class="fcmd-list-val">{f.origin_country}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </section>
+            </Show>
+
+            {/* CAMS: Webcam List */}
+            <Show when={mode() === "CAMS"}>
+              <section class="fcmd-panel fcmd-panel-grow">
+                <h3 class="fcmd-panel-hdr">📷 WEBCAMS ({WEBCAMS.length})</h3>
+                <div class="fcmd-scroll-list">
+                  <For each={WEBCAMS}>
+                    {(cam) => (
+                      <div
+                        class={`fcmd-list-row ${activeWebcam()?.id === cam.id ? "selected" : ""}`}
+                        onClick={() => {
+                          setActiveWebcam(cam);
+                          if (globeInstance) {
+                            globeInstance.pointOfView({ lat: cam.lat, lng: cam.lng, altitude: 1.0 }, 600);
+                          }
+                        }}
+                      >
+                        <span class="fcmd-list-dot" style={{ background: "#ffaa44" }} />
+                        <span class="fcmd-list-name">{cam.city}</span>
+                        <span class="fcmd-list-val">{cam.country}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </section>
+            </Show>
+          </aside>
+
+          {/* ─── CENTER: 3D GLOBE ──────────────────────────────── */}
+          <div class="fcmd-globe-wrap">
+            <div ref={globeContainerRef!} class="fcmd-globe-container" />
+
+            {/* Loading overlay */}
+            <Show when={!globeReady()}>
+              <div class="fcmd-globe-loading">
+                <div class="fcmd-spinner" />
+                <span>INITIALIZING 3D GLOBE...</span>
               </div>
+            </Show>
+
+            {/* Globe HUD — top-left */}
+            <div class="fcmd-globe-hud fcmd-hud-tl">
+              <span>{MODE_CONFIG[mode()].icon} {MODE_CONFIG[mode()].label} MODE</span>
+              <Show when={mode() === "SAT"}>
+                <span class="fcmd-dim">TRACKING {satPositions().length} OBJECTS</span>
+              </Show>
+              <Show when={mode() === "FLIGHTS"}>
+                <span class="fcmd-dim">{flights().length} AIRCRAFT</span>
+              </Show>
+              <Show when={mode() === "CAMS"}>
+                <span class="fcmd-dim">{WEBCAMS.length} CAMERAS</span>
+              </Show>
+              <Show when={mode() === "CYBER"}>
+                <span class="fcmd-dim" style={{ color: "#ff4444" }}>THREAT MONITORING ACTIVE</span>
+              </Show>
             </div>
+
+            {/* Globe HUD — bottom-right */}
+            <div class="fcmd-globe-hud fcmd-hud-br">
+              <Show when={iss()}>
+                <span class="fcmd-dim">ISS: {iss()!.latitude.toFixed(1)}°, {iss()!.longitude.toFixed(1)}°</span>
+              </Show>
+              <span class="fcmd-dim">SRC: {
+                mode() === "SAT" ? "CELESTRAK" :
+                mode() === "FLIGHTS" ? "OPENSKY-NET" :
+                mode() === "CAMS" ? "CURATED" : "FLUX-NET"
+              }</span>
+            </div>
+
+            {/* Altitude Legend (Flights mode) */}
+            <Show when={mode() === "FLIGHTS"}>
+              <div class="fcmd-alt-legend">
+                <span class="fcmd-alt-title">ALT (ft)</span>
+                <div class="fcmd-alt-item"><span style={{ background: "#00ff41" }} />{"<10K"}</div>
+                <div class="fcmd-alt-item"><span style={{ background: "#44ff88" }} />10-20K</div>
+                <div class="fcmd-alt-item"><span style={{ background: "#88ffcc" }} />20-30K</div>
+                <div class="fcmd-alt-item"><span style={{ background: "#00d4ff" }} />30-36K</div>
+                <div class="fcmd-alt-item"><span style={{ background: "#4488ff" }} />36K+</div>
+              </div>
+            </Show>
+
+            {/* Floating Webcam Player (CAMS mode, over globe) */}
+            <Show when={mode() === "CAMS" && activeWebcam()}>
+              <div class="fcmd-floating-cam">
+                <div class="fcmd-floating-cam-header">
+                  <span class="fcmd-live-dot" />
+                  <span>{activeWebcam()!.city} — {activeWebcam()!.label}</span>
+                  <button class="fcmd-floating-cam-close" onClick={() => setActiveWebcam(null)}>✕</button>
+                </div>
+                <div class="fcmd-floating-cam-viewport">
+                  <iframe
+                    src={webcamUrl()}
+                    title={activeWebcam()!.label}
+                    allow="accelerometer; autoplay; encrypted-media; gyroscope"
+                    allowfullscreen
+                    class="fcmd-cam-iframe"
+                  />
+                </div>
+              </div>
+            </Show>
           </div>
 
-          {/* Center — World Map Canvas */}
-          <div class="monitor-center">
-            <canvas ref={canvasRef} class="monitor-canvas" />
-          </div>
+          {/* ─── RIGHT PANEL ───────────────────────────────────── */}
+          <aside class="fcmd-panel-col fcmd-right">
 
-          {/* Right Panel */}
-          <div class="monitor-side monitor-right">
-            <div class="monitor-panel monitor-panel-full">
-              <div class="monitor-panel-title">📡 LIVE FEED</div>
-              <div class="monitor-news-list">
+            {/* INTEL/CYBER: Live News Stream */}
+            <Show when={mode() === "INTEL" || mode() === "CYBER"}>
+              <section class="fcmd-panel fcmd-stream-panel">
+                <h3 class="fcmd-panel-hdr">
+                  📺 LIVE INTEL
+                  <span class="fcmd-mute-btn" onClick={() => setStreamMuted((m) => !m)} title="Toggle audio (M)">
+                    {streamMuted() ? "🔇" : "🔊"}
+                  </span>
+                </h3>
+                <div class="fcmd-stream-tabs">
+                  <For each={LIVE_STREAMS}>
+                    {(s, i) => (
+                      <button
+                        class={`fcmd-stream-tab ${activeStream() === i() ? "active" : ""}`}
+                        onClick={() => setActiveStream(i())}
+                        style={{ "--tab-accent": s.accent }}
+                      >
+                        <span class="fcmd-stream-tab-dot" />{s.tag}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <div class="fcmd-stream-viewport">
+                  <iframe
+                    src={streamUrl()}
+                    title={LIVE_STREAMS[activeStream()].label}
+                    allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+                    allowfullscreen
+                    class="fcmd-stream-iframe"
+                  />
+                  <div class="fcmd-stream-label">
+                    <span class="fcmd-live-dot" />
+                    {LIVE_STREAMS[activeStream()].label}
+                  </div>
+                </div>
+              </section>
+            </Show>
+
+            {/* CAMS mode: Large webcam player on right panel */}
+            <Show when={mode() === "CAMS"}>
+              <section class="fcmd-panel fcmd-stream-panel">
+                <h3 class="fcmd-panel-hdr">📷 WEBCAM FEED</h3>
+                <Show when={activeWebcam()} fallback={
+                  <div class="fcmd-dim" style={{ padding: "20px", "text-align": "center" }}>
+                    Click a camera on the globe<br />or select from the list
+                  </div>
+                }>
+                  <div class="fcmd-stream-viewport" style={{ "aspect-ratio": "16/9" }}>
+                    <iframe
+                      src={webcamUrl()}
+                      title={activeWebcam()!.label}
+                      allow="accelerometer; autoplay; encrypted-media; gyroscope"
+                      allowfullscreen
+                      class="fcmd-stream-iframe"
+                    />
+                    <div class="fcmd-stream-label">
+                      <span class="fcmd-live-dot" />
+                      {activeWebcam()!.city} — {activeWebcam()!.label}
+                    </div>
+                  </div>
+                  <div style={{ padding: "6px" }}>
+                    <div class="fcmd-kv"><span>CITY</span><span>{activeWebcam()!.city}</span></div>
+                    <div class="fcmd-kv"><span>COUNTRY</span><span>{activeWebcam()!.country}</span></div>
+                    <div class="fcmd-kv"><span>LAT</span><span>{activeWebcam()!.lat.toFixed(3)}°</span></div>
+                    <div class="fcmd-kv"><span>LON</span><span>{activeWebcam()!.lng.toFixed(3)}°</span></div>
+                  </div>
+                </Show>
+              </section>
+            </Show>
+
+            {/* SAT mode: right panel info */}
+            <Show when={mode() === "SAT"}>
+              <section class="fcmd-panel fcmd-stream-panel">
+                <h3 class="fcmd-panel-hdr">ℹ SATELLITE INTEL</h3>
+                <div class="fcmd-sat-info-box">
+                  <p>Tracking <strong>{satPositions().length}</strong> objects in the <strong>{satGroup().toUpperCase()}</strong> group.</p>
+                  <p class="fcmd-dim">Positions computed via SGP4 propagation from NORAD TLE data (CelesTrak). Updated every 2s.</p>
+                    <div class="fcmd-sat-legend">
+                    <div class="fcmd-legend-row"><span style={{ color: "#ff4466" }}>🛰</span> Space Stations (ISS, Tiangong)</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#cc66ff" }}>🔭</span> Science (Hubble, JWST)</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#44ddaa" }}>🌤</span> Weather (GOES, NOAA)</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#ffcc44" }}>📍</span> Navigation (GPS, GLONASS)</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#88aaff" }}>⛓</span> Starlink</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#44ccff" }}>✦</span> Iridium</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#aa88ff" }}>◈</span> OneWeb</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#ff8844" }}>⊛</span> Geostationary</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#44aaff" }}>🌍</span> Earth Observation</div>
+                    <div class="fcmd-legend-row"><span style={{ color: "#88aaff" }}>📡</span> Communications</div>
+                </div>
+                </div>
+              </section>
+            </Show>
+
+            {/* FLIGHTS mode: right panel info */}
+            <Show when={mode() === "FLIGHTS"}>
+              <section class="fcmd-panel fcmd-stream-panel">
+                <h3 class="fcmd-panel-hdr">ℹ FLIGHT INTEL</h3>
+                <div class="fcmd-sat-info-box">
+                  <p>Showing <strong>{flights().length}</strong> airborne aircraft worldwide.</p>
+                  <p class="fcmd-dim">Live data from OpenSky Network ADS-B receivers. Click an aircraft on the globe or list for details.</p>
+                  <Show when={flights().length > 0}>
+                    <div style={{ "margin-top": "8px" }}>
+                      <div class="fcmd-kv"><span>AVG ALT</span><span>
+                        {(flights().reduce((s, f) => s + f.altitude, 0) / flights().length / 0.3048).toFixed(0)} ft
+                      </span></div>
+                      <div class="fcmd-kv"><span>AVG SPD</span><span>
+                        {(flights().reduce((s, f) => s + f.velocity, 0) / flights().length * 1.944).toFixed(0)} kts
+                      </span></div>
+                      <div class="fcmd-kv"><span>COUNTRIES</span><span>
+                        {new Set(flights().map((f) => f.origin_country)).size}
+                      </span></div>
+                    </div>
+                  </Show>
+                </div>
+              </section>
+            </Show>
+
+            {/* News Feed — always visible */}
+            <section class="fcmd-panel fcmd-panel-grow">
+              <h3 class="fcmd-panel-hdr">📡 GLOBAL FEED</h3>
+              <div class="fcmd-news-list">
                 <For each={news()}>
                   {(item, i) => (
-                    <div class="monitor-news-item">
-                      <div class="monitor-news-idx">{String(i() + 1).padStart(2, "0")}</div>
-                      <div class="monitor-news-body">
-                        <div class="monitor-news-title">{item.title}</div>
-                        <div class="monitor-news-meta">
-                          {item.source} · {item.timestamp}
-                        </div>
+                    <div class="fcmd-news-item">
+                      <span class="fcmd-news-idx">{String(i() + 1).padStart(2, "0")}</span>
+                      <div class="fcmd-news-body">
+                        <div class="fcmd-news-title">{item.title}</div>
+                        <div class="fcmd-news-meta">{item.source} · {item.timestamp}</div>
                       </div>
                     </div>
                   )}
                 </For>
                 <Show when={news().length === 0}>
-                  <div class="monitor-dim" style={{ padding: "12px" }}>Fetching headlines...</div>
+                  <div class="fcmd-dim" style={{ padding: "12px" }}>Decrypting feeds...</div>
                 </Show>
               </div>
+            </section>
+          </aside>
+        </main>
+
+        {/* ═══ BOTTOM TICKER ═════════════════════════════════════ */}
+        <footer class="fcmd-ticker">
+          <div class="fcmd-ticker-label">INTEL</div>
+          <div class="fcmd-ticker-track">
+            <div
+              class="fcmd-ticker-text"
+              style={{ transform: `translateX(-${tickerOffset() % (tickerText().length * 7.5)}px)` }}
+            >
+              {tickerText()}{tickerText()}{tickerText()}
             </div>
           </div>
-        </div>
-
-        {/* ── Bottom Ticker ── */}
-        <div class="monitor-ticker">
-          <div
-            class="monitor-ticker-text"
-            style={{ transform: `translateX(-${tickerOffset() % (tickerText().length * 8)}px)` }}
-          >
-            {tickerText()}{tickerText()}
-          </div>
-        </div>
-
-        {/* Scanline overlay */}
-        <div class="monitor-scanlines" />
+        </footer>
       </div>
     </div>
   );

@@ -700,35 +700,3 @@ pub async fn mcp_ai_step(
         }
     }
 }
-
-// ─── Monitor Commands ───────────────────────────
-
-#[tauri::command]
-pub async fn monitor_iss_position() -> Result<crate::monitor::ISSPosition, String> {
-    let engine = crate::monitor::MonitorEngine::new();
-    engine.fetch_iss_position().await
-}
-
-#[tauri::command]
-pub async fn monitor_news() -> Result<Vec<crate::monitor::NewsItem>, String> {
-    let engine = crate::monitor::MonitorEngine::new();
-    engine.fetch_news().await
-}
-
-#[tauri::command]
-pub fn monitor_system_stats() -> Result<crate::monitor::SystemStats, String> {
-    let engine = crate::monitor::MonitorEngine::new();
-    Ok(engine.get_system_stats())
-}
-
-#[tauri::command]
-pub async fn monitor_public_ip() -> Result<String, String> {
-    let engine = crate::monitor::MonitorEngine::new();
-    engine.fetch_public_ip().await
-}
-
-#[tauri::command]
-pub fn monitor_activity() -> Result<Vec<crate::monitor::ActivityEvent>, String> {
-    let engine = crate::monitor::MonitorEngine::new();
-    Ok(engine.generate_activity())
-}

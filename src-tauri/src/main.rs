@@ -111,12 +111,14 @@ fn main() {
             commands::mcp_ai_followup,
             commands::mcp_ai_step,
 
-            // Monitor
-            commands::monitor_iss_position,
-            commands::monitor_news,
-            commands::monitor_system_stats,
-            commands::monitor_public_ip,
-            commands::monitor_activity,
+             // ═══ Monitor — all from monitor module ═══
+            monitor::monitor_fetch_tle,
+            monitor::monitor_flights,
+            monitor::monitor_iss_position,
+            monitor::monitor_news,
+            monitor::monitor_system_stats,
+            monitor::monitor_public_ip,
+            monitor::monitor_activity,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

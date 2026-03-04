@@ -21,6 +21,7 @@ import MonitorDashboard from "./components/MonitorDashboard";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
+import "./styles/monitor.css";
 
 interface Tab {
   id: string;
