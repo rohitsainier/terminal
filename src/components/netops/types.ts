@@ -1,0 +1,193 @@
+import type { Accessor, Setter } from "solid-js";
+
+// ═══ Tool identifiers ═══
+
+export type NetopsTool =
+  | "ping" | "portscan" | "dns" | "whois" | "wifi"
+  | "httpheaders" | "ssl" | "geoip" | "arp"
+  | "subnet" | "reversedns" | "traceroute";
+
+// ═══ Result types (mirror Rust structs) ═══
+
+export interface PingResult {
+  host: string;
+  latency_ms: number;
+  status: string;
+  timestamp: number;
+}
+
+export interface PortEntry {
+  port: number;
+  status: string;
+  service: string;
+}
+
+export interface PortScanResult {
+  host: string;
+  ports: PortEntry[];
+  scan_duration_ms: number;
+}
+
+export interface DnsRecord {
+  record_type: string;
+  name: string;
+  value: string;
+  ttl: number | null;
+}
+
+export interface DnsLookupResult {
+  hostname: string;
+  records: DnsRecord[];
+  query_time_ms: number;
+  server: string;
+}
+
+export interface WhoisResult {
+  domain: string;
+  registrar: string;
+  creation_date: string;
+  expiry_date: string;
+  name_servers: string[];
+  status: string[];
+  raw: string;
+}
+
+export interface WifiNetwork {
+  ssid: string;
+  bssid: string;
+  rssi: number;
+  channel: number;
+  security: string;
+}
+
+export interface SecurityHeader {
+  name: string;
+  present: boolean;
+  value: string;
+  rating: string;
+}
+
+export interface HttpHeaderResult {
+  url: string;
+  status_code: number;
+  headers: [string, string][];
+  security_headers: SecurityHeader[];
+  response_time_ms: number;
+}
+
+export interface CertChainEntry {
+  subject: string;
+  issuer: string;
+}
+
+export interface SslCertInfo {
+  domain: string;
+  issuer: string;
+  subject: string;
+  valid_from: string;
+  valid_to: string;
+  days_remaining: number;
+  serial: string;
+  sans: string[];
+  chain: CertChainEntry[];
+  protocol: string;
+}
+
+export interface GeoIpResult {
+  ip: string;
+  country: string;
+  country_code: string;
+  region: string;
+  city: string;
+  lat: number;
+  lon: number;
+  isp: string;
+  org: string;
+  timezone: string;
+}
+
+export interface ArpEntry {
+  ip: string;
+  mac: string;
+  interface_name: string;
+  hostname: string;
+}
+
+export interface SubnetCalcResult {
+  cidr: string;
+  network: string;
+  broadcast: string;
+  first_host: string;
+  last_host: string;
+  netmask: string;
+  wildcard: string;
+  host_count: number;
+  prefix_len: number;
+}
+
+export interface ReverseDnsResult {
+  ip: string;
+  hostnames: string[];
+  query_time_ms: number;
+}
+
+export interface TracerouteHop {
+  hop: number;
+  ip: string;
+  hostname: string;
+  rtt_ms: number[];
+}
+
+export interface TracerouteResult {
+  target: string;
+  hops: TracerouteHop[];
+  completed: boolean;
+}
+
+// ═══ Discriminated union for results ═══
+
+export type ToolResult =
+  | { kind: "ping"; data: PingResult }
+  | { kind: "portscan"; data: PortScanResult }
+  | { kind: "dns"; data: DnsLookupResult }
+  | { kind: "whois"; data: WhoisResult }
+  | { kind: "wifi"; data: WifiNetwork[] }
+  | { kind: "httpheaders"; data: HttpHeaderResult }
+  | { kind: "ssl"; data: SslCertInfo }
+  | { kind: "geoip"; data: GeoIpResult }
+  | { kind: "arp"; data: ArpEntry[] }
+  | { kind: "subnet"; data: SubnetCalcResult }
+  | { kind: "reversedns"; data: ReverseDnsResult }
+  | { kind: "traceroute"; data: TracerouteResult };
+
+export interface HistoryEntry {
+  tool: NetopsTool;
+  target: string;
+  timestamp: number;
+  success: boolean;
+}
+
+// ═══ Store interface ═══
+
+export interface NetopsStore {
+  activeTool: Accessor<NetopsTool>;
+  setActiveTool: Setter<NetopsTool>;
+  utc: Accessor<string>;
+  setUtc: Setter<string>;
+  target: Accessor<string>;
+  setTarget: Setter<string>;
+  extraParam: Accessor<string>;
+  setExtraParam: Setter<string>;
+  result: Accessor<ToolResult | null>;
+  setResult: Setter<ToolResult | null>;
+  loading: Accessor<boolean>;
+  setLoading: Setter<boolean>;
+  error: Accessor<string>;
+  setError: Setter<string>;
+  pingHistory: Accessor<PingResult[]>;
+  setPingHistory: Setter<PingResult[]>;
+  history: Accessor<HistoryEntry[]>;
+  setHistory: Setter<HistoryEntry[]>;
+  runTool: () => Promise<void>;
+  statusText: () => string;
+}

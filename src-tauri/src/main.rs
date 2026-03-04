@@ -7,6 +7,7 @@ mod snippets;
 mod ssh;
 mod terminal;
 mod monitor;
+mod netops;
 
 use ai::AIEngine;
 use commands::AppState;
@@ -125,6 +126,20 @@ fn main() {
             monitor::monitor_crypto,
             monitor::monitor_speedtest,
             monitor::monitor_net_throughput,
+
+            // ═══ NetOps — all from netops module ═══
+            netops::netops_ping,
+            netops::netops_port_scan,
+            netops::netops_dns_lookup,
+            netops::netops_whois,
+            netops::netops_wifi_scan,
+            netops::netops_http_headers,
+            netops::netops_ssl_inspect,
+            netops::netops_ip_geolocate,
+            netops::netops_arp_table,
+            netops::netops_subnet_calc,
+            netops::netops_reverse_dns,
+            netops::netops_traceroute,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

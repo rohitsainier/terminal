@@ -1,0 +1,726 @@
+/* ═══════════════════════════════════════════════════════════════════
+   FLUX NETOPS — Network Operations Dashboard
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --nops-primary:      #00d4ff;
+  --nops-primary-dim:  rgba(0, 212, 255, 0.15);
+  --nops-primary-glow: rgba(0, 212, 255, 0.3);
+  --nops-secondary:    #3b82f6;
+  --nops-success:      #22c55e;
+  --nops-danger:       #ef4444;
+  --nops-warning:      #f59e0b;
+  --nops-bg:           #0a0a0f;
+  --nops-bg-panel:     rgba(10, 10, 15, 0.6);
+  --nops-border:       rgba(0, 212, 255, 0.12);
+  --nops-border-bright: rgba(0, 212, 255, 0.25);
+  --nops-text:         rgba(200, 220, 240, 0.9);
+  --nops-text-dim:     rgba(150, 170, 200, 0.6);
+  --nops-text-white:   #e8f0ff;
+  --nops-font:         'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+}
+
+/* ─── Overlay ─── */
+.nops-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: nops-fadeIn 0.3s ease-out;
+}
+
+@keyframes nops-fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ─── Dashboard container ─── */
+.nops-dashboard {
+  position: relative;
+  width: 98vw;
+  height: 96vh;
+  max-width: 1920px;
+  max-height: 1200px;
+  background: var(--nops-bg);
+  border: 1px solid var(--nops-border-bright);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 0 80px rgba(0, 0, 0, 0.6),
+    0 0 30px rgba(0, 212, 255, 0.05),
+    inset 0 0 60px rgba(0, 0, 0, 0.3);
+  font-family: var(--nops-font);
+  color: var(--nops-text);
+  font-size: 11px;
+  line-height: 1.4;
+  user-select: none;
+}
+
+/* ─── Scanlines & Vignette ─── */
+.nops-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+}
+
+.nops-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 29;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 60%,
+    rgba(0, 0, 0, 0.4) 100%
+  );
+}
+
+/* ─── Top Bar ─── */
+.nops-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--nops-border);
+  background: rgba(0, 10, 20, 0.5);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.nops-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nops-logo {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--nops-primary);
+  letter-spacing: 3px;
+  text-shadow: 0 0 10px var(--nops-primary-glow);
+}
+
+.nops-logo-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nops-text-dim);
+  letter-spacing: 2px;
+}
+
+.nops-version {
+  font-size: 9px;
+  padding: 1px 5px;
+  background: var(--nops-primary-dim);
+  border: 1px solid var(--nops-border);
+  border-radius: 3px;
+  color: var(--nops-primary);
+}
+
+.nops-live-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 3px;
+  color: #ef4444;
+  animation: nops-pulse 2s ease-in-out infinite;
+}
+
+@keyframes nops-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+.nops-topbar-center {
+  display: flex;
+  align-items: center;
+}
+
+.nops-status-text {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: var(--nops-primary-dim);
+  border: 1px solid var(--nops-border);
+}
+.nops-status-text[data-status="scanning"] {
+  color: var(--nops-warning);
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.1);
+  animation: nops-pulse 1s ease-in-out infinite;
+}
+.nops-status-text[data-status="error"] {
+  color: var(--nops-danger);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+}
+.nops-status-text[data-status="complete"] {
+  color: var(--nops-success);
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.nops-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nops-clock {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nops-primary);
+  letter-spacing: 1px;
+}
+
+.nops-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--nops-border);
+  border-radius: 6px;
+  color: var(--nops-text-dim);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.nops-close-btn:hover {
+  color: var(--nops-danger);
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* ─── Main Grid ─── */
+.nops-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px 1fr 260px;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Panel Columns ─── */
+.nops-panel-col {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.15) transparent;
+}
+.nops-panel-col::-webkit-scrollbar { width: 4px; }
+.nops-panel-col::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.15);
+  border-radius: 2px;
+}
+
+.nops-left {
+  border-right: 1px solid var(--nops-border);
+  background: var(--nops-bg-panel);
+}
+
+.nops-right {
+  border-left: 1px solid var(--nops-border);
+  background: var(--nops-bg-panel);
+}
+
+/* ─── Center Panel ─── */
+.nops-center {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Panels ─── */
+.nops-panel {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--nops-border);
+  flex-shrink: 0;
+}
+
+.nops-panel-grow {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.nops-panel-hdr {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--nops-primary);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--nops-border);
+}
+
+/* ─── Key-Value Rows ─── */
+.nops-kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 10px;
+  gap: 8px;
+}
+
+.nops-kv > span:first-child {
+  color: var(--nops-text-dim);
+  font-weight: 600;
+  flex-shrink: 0;
+  min-width: 80px;
+  letter-spacing: 0.5px;
+}
+
+.nops-kv > span:last-child {
+  text-align: right;
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--nops-text-white);
+}
+
+/* ─── Tool List ─── */
+.nops-tool-list {
+  padding: 4px 0;
+}
+
+.nops-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.nops-tool-row:hover {
+  background: rgba(0, 212, 255, 0.04);
+}
+
+.nops-tool-row.active {
+  background: rgba(0, 212, 255, 0.08);
+  border-left-color: var(--nops-primary);
+}
+
+.nops-tool-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+}
+
+.nops-tool-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nops-tool-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--nops-text-white);
+  letter-spacing: 0.5px;
+}
+
+.nops-tool-desc {
+  font-size: 9px;
+  color: var(--nops-text-dim);
+  margin-top: 1px;
+}
+
+/* ─── Input Bar ─── */
+.nops-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--nops-border);
+  background: rgba(0, 5, 10, 0.3);
+  flex-shrink: 0;
+}
+
+.nops-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--nops-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--nops-text-white);
+  font-family: var(--nops-font);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.nops-input:focus {
+  border-color: var(--nops-primary);
+  box-shadow: 0 0 8px var(--nops-primary-dim);
+}
+.nops-input::placeholder {
+  color: var(--nops-text-dim);
+}
+.nops-input-small {
+  flex: 0 1 180px;
+}
+
+.nops-select {
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--nops-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--nops-text-white);
+  font-family: var(--nops-font);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+}
+.nops-select:focus {
+  border-color: var(--nops-primary);
+}
+
+.nops-run-btn {
+  padding: 8px 24px;
+  background: var(--nops-primary-dim);
+  border: 1px solid var(--nops-primary-glow);
+  border-radius: 6px;
+  color: var(--nops-primary);
+  font-family: var(--nops-font);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.nops-run-btn:hover:not(:disabled) {
+  background: rgba(0, 212, 255, 0.25);
+  box-shadow: 0 0 12px var(--nops-primary-dim);
+}
+.nops-run-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.nops-run-btn.loading {
+  animation: nops-pulse 1s ease-in-out infinite;
+}
+
+/* ─── Error ─── */
+.nops-error {
+  padding: 8px 12px;
+  margin: 8px 12px 0;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 6px;
+  color: var(--nops-danger);
+  font-size: 10px;
+  word-break: break-all;
+}
+
+/* ─── Results Area ─── */
+.nops-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 212, 255, 0.15) transparent;
+}
+.nops-results::-webkit-scrollbar { width: 4px; }
+.nops-results::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.15);
+  border-radius: 2px;
+}
+
+/* ─── Output Container ─── */
+.nops-output {
+  font-size: 11px;
+  line-height: 1.6;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--nops-border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.nops-result-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--nops-primary);
+  letter-spacing: 1px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--nops-border);
+}
+
+.nops-result-summary {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--nops-border);
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  letter-spacing: 0.5px;
+}
+
+/* ─── Table ─── */
+.nops-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.nops-table th {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--nops-border-bright);
+  color: var(--nops-primary);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-size: 9px;
+}
+
+.nops-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  color: var(--nops-text);
+}
+
+.nops-table tr:hover td {
+  background: rgba(0, 212, 255, 0.03);
+}
+
+/* ─── Status Colors ─── */
+.nops-status-open     { color: var(--nops-success); }
+.nops-status-closed   { color: var(--nops-danger); opacity: 0.6; }
+.nops-status-filtered { color: var(--nops-warning); }
+
+/* ─── Badges ─── */
+.nops-badge {
+  display: inline-flex;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.nops-badge-good    { background: rgba(34, 197, 94, 0.12); color: var(--nops-success); border: 1px solid rgba(34, 197, 94, 0.2); }
+.nops-badge-missing { background: rgba(239, 68, 68, 0.12); color: var(--nops-danger); border: 1px solid rgba(239, 68, 68, 0.2); }
+.nops-badge-warning { background: rgba(245, 158, 11, 0.12); color: var(--nops-warning); border: 1px solid rgba(245, 158, 11, 0.2); }
+
+/* ─── Sparkline ─── */
+.nops-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 44px;
+  padding: 6px 0;
+}
+
+.nops-spark-bar {
+  width: 6px;
+  background: var(--nops-primary);
+  border-radius: 1px;
+  transition: height 0.2s ease;
+  opacity: 0.8;
+}
+.nops-spark-bar:hover {
+  opacity: 1;
+  background: var(--nops-text-white);
+}
+
+/* ─── List Items ─── */
+.nops-list-item {
+  padding: 3px 0;
+  font-size: 10px;
+  color: var(--nops-text);
+}
+
+.nops-no-data {
+  padding: 12px 0;
+  text-align: center;
+  color: var(--nops-text-dim);
+  font-size: 10px;
+}
+
+.nops-header-val {
+  word-break: break-all;
+  max-width: 60% !important;
+}
+
+/* ─── Placeholder ─── */
+.nops-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+  gap: 12px;
+}
+
+.nops-placeholder-icon {
+  font-size: 40px;
+  opacity: 0.3;
+}
+
+.nops-placeholder-text {
+  font-size: 13px;
+  color: var(--nops-text-dim);
+  letter-spacing: 0.5px;
+}
+
+.nops-placeholder-hint {
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  opacity: 0.5;
+}
+
+/* ─── Info Panel ─── */
+.nops-help-section {
+  padding-top: 4px;
+}
+
+.nops-help-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--nops-primary);
+  margin-bottom: 6px;
+}
+
+.nops-help-desc {
+  font-size: 10px;
+  color: var(--nops-text);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
+.nops-help-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.nops-help-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--nops-text-dim);
+  letter-spacing: 0.5px;
+}
+
+.nops-help-example {
+  font-size: 10px;
+  color: var(--nops-primary);
+  font-family: var(--nops-font);
+}
+
+/* ─── History ─── */
+.nops-history-list {
+  padding-top: 4px;
+}
+
+.nops-history-empty {
+  padding: 12px 0;
+  text-align: center;
+  color: var(--nops-text-dim);
+  font-size: 10px;
+}
+
+.nops-history-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 10px;
+}
+
+.nops-history-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.nops-history-dot.success { background: var(--nops-success); }
+.nops-history-dot.fail    { background: var(--nops-danger); }
+
+.nops-history-tool {
+  font-weight: 600;
+  color: var(--nops-primary);
+  min-width: 55px;
+  font-size: 9px;
+}
+
+.nops-history-target {
+  flex: 1;
+  color: var(--nops-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nops-history-time {
+  color: var(--nops-text-dim);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+/* ─── Status Bar ─── */
+.nops-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--nops-border);
+  background: rgba(0, 5, 10, 0.5);
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  flex-shrink: 0;
+}
+
+.nops-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.nops-status-dot[data-status="ready"]    { background: var(--nops-primary); opacity: 0.5; }
+.nops-status-dot[data-status="scanning"] { background: var(--nops-warning); animation: nops-pulse 1s ease-in-out infinite; }
+.nops-status-dot[data-status="error"]    { background: var(--nops-danger); }
+.nops-status-dot[data-status="complete"] { background: var(--nops-success); }
+
+.nops-status-sep {
+  color: rgba(0, 212, 255, 0.2);
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 900px) {
+  .nops-main {
+    grid-template-columns: 1fr;
+  }
+  .nops-left, .nops-right {
+    display: none;
+  }
+}

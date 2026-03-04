@@ -16,7 +16,7 @@ portable-pty = "0.8"
 
 # AI
 reqwest = { version = "0.12", features = ["json"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "net"] }
 
 # Utilities
 serde = { version = "1", features = ["derive"] }
