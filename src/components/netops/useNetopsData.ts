@@ -34,7 +34,7 @@ export function useNetopsData(): NetopsStore {
     if (loading()) return;
 
     // Tools that don't need a target
-    const noTargetTools: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents"];
+    const noTargetTools: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents", "handshake"];
     if (!noTargetTools.includes(tool) && !tgt) {
       setError("Target is required");
       return;
@@ -171,6 +171,67 @@ export function useNetopsData(): NetopsStore {
             const data = await invoke<SecurityIncident[]>("netops_incident_list");
             setResult({ kind: "incidents", data });
           }
+          break;
+        }
+        case "servicescan": {
+          const ports = extraParam() || undefined;
+          const data = await invoke<import("./types").ServiceScanResult>("netops_service_scan", { host: tgt, ports: ports || null });
+          setResult({ kind: "servicescan", data });
+          break;
+        }
+        case "subenum": {
+          const data = await invoke<import("./types").SubdomainEnumResult>("netops_subdomain_enum", { domain: tgt });
+          setResult({ kind: "subenum", data });
+          break;
+        }
+        case "dirbust": {
+          const data = await invoke<import("./types").DirBustResult>("netops_dir_bust", { url: tgt });
+          setResult({ kind: "dirbust", data });
+          break;
+        }
+        case "webfinger": {
+          const data = await invoke<import("./types").WebFingerprintResult>("netops_web_fingerprint", { url: tgt });
+          setResult({ kind: "webfinger", data });
+          break;
+        }
+        case "wafdetect": {
+          const data = await invoke<import("./types").WafDetectResult>("netops_waf_detect", { url: tgt });
+          setResult({ kind: "wafdetect", data });
+          break;
+        }
+        case "webvuln": {
+          const data = await invoke<import("./types").WebVulnResult>("netops_web_vuln_scan", { url: tgt });
+          setResult({ kind: "webvuln", data });
+          break;
+        }
+        case "hashid": {
+          const data = await invoke<import("./types").HashIdResult>("netops_hash_id", { input: tgt });
+          setResult({ kind: "hashid", data });
+          break;
+        }
+        case "cipherscan": {
+          const data = await invoke<import("./types").CipherScanResult>("netops_cipher_scan", { host: tgt });
+          setResult({ kind: "cipherscan", data });
+          break;
+        }
+        case "handshake": {
+          // Parse target info from extraParam if provided (format: ssid|bssid|channel|security|rssi)
+          const ep = extraParam();
+          let params: Record<string, unknown> = {};
+          if (ep) {
+            const parts = ep.split("|");
+            if (parts.length >= 5) {
+              params = {
+                targetSsid: parts[0] || null,
+                targetBssid: parts[1] || null,
+                targetChannel: parts[2] ? parseInt(parts[2]) : null,
+                targetSecurity: parts[3] || null,
+                targetRssi: parts[4] ? parseInt(parts[4]) : null,
+              };
+            }
+          }
+          const data = await invoke<import("./types").HandshakeResult>("netops_handshake_analyze", params);
+          setResult({ kind: "handshake", data });
           break;
         }
       }

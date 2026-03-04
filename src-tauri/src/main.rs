@@ -150,6 +150,16 @@ fn main() {
             netops::netops_incident_list,
             netops::netops_incident_create,
             netops::netops_incident_update,
+            // ═══ NetOps — Kali-style tools ═══
+            netops::netops_service_scan,
+            netops::netops_subdomain_enum,
+            netops::netops_dir_bust,
+            netops::netops_web_fingerprint,
+            netops::netops_waf_detect,
+            netops::netops_web_vuln_scan,
+            netops::netops_hash_id,
+            netops::netops_cipher_scan,
+            netops::netops_handshake_analyze,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

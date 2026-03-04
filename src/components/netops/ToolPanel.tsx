@@ -25,6 +25,15 @@ const TOOLS: { id: NetopsTool; icon: string; label: string; desc: string }[] = [
   { id: "threatfeed",  icon: "☠️", label: "THREAT INTEL",  desc: "IP threat check" },
   { id: "secscore",    icon: "🏆", label: "SEC SCORE",    desc: "Security assessment" },
   { id: "incidents",   icon: "🔔", label: "INCIDENTS",    desc: "Incident tracking" },
+  { id: "servicescan", icon: "🔬", label: "SVC SCAN",     desc: "Banner grabbing" },
+  { id: "subenum",     icon: "🌍", label: "SUBDOMAINS",   desc: "DNS brute force" },
+  { id: "dirbust",     icon: "📂", label: "DIR BRUTE",    desc: "Path enumeration" },
+  { id: "webfinger",   icon: "🕵️", label: "FINGERPRINT",  desc: "Tech detection" },
+  { id: "wafdetect",   icon: "🧱", label: "WAF DETECT",   desc: "Firewall detection" },
+  { id: "webvuln",     icon: "🐛", label: "VULN SCAN",    desc: "Web vuln check" },
+  { id: "hashid",      icon: "🔑", label: "HASH ID",      desc: "Hash identifier" },
+  { id: "cipherscan",  icon: "🔐", label: "CIPHER SCAN",  desc: "TLS cipher enum" },
+  { id: "handshake",   icon: "🤝", label: "HANDSHAKE",    desc: "WPA 4-way analysis" },
 ];
 
 export default function ToolPanel(props: Props) {

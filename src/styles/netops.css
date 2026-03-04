@@ -878,6 +878,237 @@
   margin-top: 4px;
 }
 
+/* ─── Vuln Cards ─── */
+.nops-vuln-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.nops-vuln-card {
+  background: rgba(0,0,0,0.3);
+  border-left: 3px solid var(--nops-text-dim);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.nops-severity-critical { border-left-color: #ff1744; }
+.nops-severity-high { border-left-color: #ff5252; }
+.nops-severity-medium { border-left-color: #ffc107; }
+.nops-severity-low { border-left-color: #00d4ff; }
+.nops-severity-info { border-left-color: #69f0ae; }
+
+.nops-badge-critical { background: #ff1744; color: #fff; }
+.nops-badge-high { background: #ff5252; color: #fff; }
+.nops-badge-medium { background: #ffc107; color: #000; }
+.nops-badge-low { background: #00d4ff; color: #000; }
+.nops-badge-info { background: #69f0ae; color: #000; }
+
+.nops-vuln-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nops-text-white);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.nops-vuln-detail {
+  font-size: 10px;
+  color: var(--nops-text);
+  margin-bottom: 3px;
+}
+
+.nops-vuln-remediation {
+  font-size: 9px;
+  color: #69f0ae;
+  font-style: italic;
+}
+
+/* ─── Tech Fingerprint Cards ─── */
+.nops-tech-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.nops-tech-card {
+  background: rgba(0, 212, 255, 0.05);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.nops-tech-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--nops-accent);
+}
+
+.nops-tech-category {
+  font-size: 9px;
+  color: var(--nops-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.nops-tech-version {
+  font-size: 10px;
+  color: var(--nops-text);
+}
+
+.nops-tech-evidence {
+  font-size: 9px;
+  color: var(--nops-text-dim);
+  margin-top: 2px;
+  font-style: italic;
+}
+
+/* ─── WAF Status ─── */
+.nops-waf-status {
+  text-align: center;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin: 8px 0;
+}
+
+.nops-waf-detected {
+  background: rgba(255, 23, 68, 0.15);
+  border: 1px solid rgba(255, 23, 68, 0.4);
+  color: #ff5252;
+}
+
+.nops-waf-none {
+  background: rgba(105, 240, 174, 0.1);
+  border: 1px solid rgba(105, 240, 174, 0.3);
+  color: #69f0ae;
+}
+
+/* ─── Cipher / Protocol Badges ─── */
+.nops-cipher-strong { background: #69f0ae; color: #000; }
+.nops-cipher-acceptable { background: #00d4ff; color: #000; }
+.nops-cipher-weak { background: #ffc107; color: #000; }
+.nops-cipher-insecure { background: #ff1744; color: #fff; }
+
+.nops-proto-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.nops-proto-secure {
+  background: rgba(105, 240, 174, 0.15);
+  border: 1px solid rgba(105, 240, 174, 0.3);
+  color: #69f0ae;
+}
+
+.nops-proto-outdated {
+  background: rgba(255, 23, 68, 0.15);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  color: #ff5252;
+}
+
+/* ─── Handshake Steps ─── */
+.nops-handshake-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.nops-handshake-step {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 8px;
+  text-align: center;
+  position: relative;
+}
+
+.nops-handshake-complete {
+  border-color: rgba(105, 240, 174, 0.4);
+  background: rgba(105, 240, 174, 0.05);
+}
+
+.nops-handshake-pending {
+  border-color: rgba(255, 255, 255, 0.06);
+  opacity: 0.5;
+}
+
+.nops-handshake-step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--nops-accent);
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 6px;
+}
+
+.nops-handshake-pending .nops-handshake-step-num {
+  background: var(--nops-text-dim);
+}
+
+.nops-handshake-not-connected {
+  border-color: rgba(255, 165, 0, 0.2);
+  opacity: 0.6;
+}
+
+.nops-handshake-not-connected .nops-handshake-step-num {
+  background: #f59e0b;
+}
+
+.nops-handshake-step-name {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--nops-text-white);
+  margin-bottom: 3px;
+}
+
+.nops-handshake-step-desc {
+  font-size: 8px;
+  color: var(--nops-text-dim);
+  line-height: 1.3;
+}
+
+/* ─── WiFi Handshake Action Button ─── */
+.nops-wifi-handshake-btn {
+  background: transparent;
+  border: 1px solid var(--nops-accent);
+  color: var(--nops-accent);
+  font-size: 9px;
+  font-family: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.nops-wifi-handshake-btn:hover {
+  background: var(--nops-accent);
+  color: #000;
+}
+.nops-bssid {
+  font-size: 10px;
+  color: var(--nops-text-dim);
+  font-family: monospace;
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 900px) {
   .nops-main {

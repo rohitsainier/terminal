@@ -25,6 +25,15 @@ const TOOL_HELP: Record<NetopsTool, { title: string; desc: string; usage: string
   threatfeed:  { title: "Threat Intel", desc: "Checks an IP against public threat feeds (Shodan InternetDB, Spamhaus, abuse.ch). Shows open ports, vulns, and threat score.", usage: "Enter an IP address", example: "8.8.8.8" },
   secscore:    { title: "Security Score", desc: "Comprehensive local security assessment. Checks firewall, FileVault, SIP, Gatekeeper, auto-updates, and more.", usage: "No input needed — click Run to assess.", example: "" },
   incidents:   { title: "Incidents", desc: "Local incident management. Create, list, and update security incidents with severity and status tracking.", usage: "Empty = list all. 'new:severity:title:desc' to create. 'update:ID:status:note' to update.", example: "new:high:Suspicious login:Multiple failed SSH attempts" },
+  servicescan: { title: "Service Scan", desc: "Enhanced port scan with TCP banner grabbing. Connects to open ports and reads service banners to identify software and versions.", usage: "Enter hostname or IP. Optionally specify ports (comma-separated) in extra field.", example: "scanme.nmap.org" },
+  subenum:     { title: "Subdomain Enum", desc: "DNS brute force with ~90 common subdomain wordlist (www, mail, api, dev, staging, admin, cdn, vpn, etc.).", usage: "Enter a domain name", example: "example.com" },
+  dirbust:     { title: "Dir Brute Force", desc: "HTTP path enumeration with ~80 built-in paths. Checks for admin panels, config files, backups, API docs, and sensitive files.", usage: "Enter a URL", example: "https://example.com" },
+  webfinger:   { title: "Web Fingerprint", desc: "Technology detection from HTTP headers, cookies, and HTML body. Identifies servers, frameworks, CDNs, CMS, and JS libraries.", usage: "Enter a URL", example: "https://github.com" },
+  wafdetect:   { title: "WAF Detection", desc: "Detects Web Application Firewalls by comparing normal vs attack-pattern responses. Checks header signatures and status codes.", usage: "Enter a URL", example: "https://cloudflare.com" },
+  webvuln:     { title: "Vuln Scanner", desc: "Nikto-lite web vulnerability scanner. Checks for exposed files, directory listing, missing security headers, CORS issues, and more.", usage: "Enter a URL", example: "https://example.com" },
+  hashid:      { title: "Hash Identifier", desc: "Identifies hash type from input string. Supports MD5, SHA-1/256/512, bcrypt, NTLM, MySQL, Unix crypt, Argon2, JWT, and Base64.", usage: "Enter a hash string", example: "5d41402abc4b2a76b9719d911017c592" },
+  cipherscan:  { title: "Cipher Scan", desc: "Enumerates supported TLS protocol versions and cipher suites. Grades configuration A-F based on protocol and cipher strength.", usage: "Enter a domain name", example: "github.com" },
+  handshake:   { title: "WPA Handshake", desc: "Analyzes the current WiFi connection's WPA/WPA2/WPA3 4-way handshake status, security parameters, and recent EAPOL events from system logs.", usage: "No input needed — click Run to analyze current connection.", example: "" },
 };
 
 export default function InfoPanel(props: Props) {

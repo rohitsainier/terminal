@@ -25,6 +25,15 @@ const TOOL_PLACEHOLDERS: Record<NetopsTool, string> = {
   threatfeed: "8.8.8.8",
   secscore: "",
   incidents: "",
+  servicescan: "scanme.nmap.org",
+  subenum: "example.com",
+  dirbust: "https://example.com",
+  webfinger: "https://github.com",
+  wafdetect: "https://cloudflare.com",
+  webvuln: "https://example.com",
+  hashid: "5d41402abc4b2a76b9719d911017c592",
+  cipherscan: "github.com",
+  handshake: "",
 };
 
 const TOOL_LABELS: Record<NetopsTool, string> = {
@@ -47,17 +56,26 @@ const TOOL_LABELS: Record<NetopsTool, string> = {
   threatfeed: "IP Address",
   secscore: "",
   incidents: "",
+  servicescan: "Host",
+  subenum: "Domain",
+  dirbust: "URL",
+  webfinger: "URL",
+  wafdetect: "URL",
+  webvuln: "URL",
+  hashid: "Hash",
+  cipherscan: "Domain",
+  handshake: "",
 };
 
 const DNS_TYPES = ["A", "AAAA", "MX", "CNAME", "TXT", "NS", "SOA"];
 const LOG_FILTERS = ["all", "security", "network", "firewall", "auth"];
 const ROGUEAP_MODES = ["scan", "save"];
-const NO_TARGET_TOOLS: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents"];
+const NO_TARGET_TOOLS: NetopsTool[] = ["wifi", "arp", "wifiauth", "traffic", "rogueap", "logs", "secscore", "incidents", "handshake"];
 
 export default function ResultPanel(props: Props) {
   const tool = () => props.store.activeTool();
   const needsTarget = () => !NO_TARGET_TOOLS.includes(tool());
-  const needsExtra = () => tool() === "dns" || tool() === "portscan" || tool() === "wifiauth" || tool() === "logs" || tool() === "rogueap";
+  const needsExtra = () => tool() === "dns" || tool() === "portscan" || tool() === "wifiauth" || tool() === "logs" || tool() === "rogueap" || tool() === "servicescan";
 
   function handleSubmit(e: Event) {
     e.preventDefault();
@@ -123,6 +141,16 @@ export default function ResultPanel(props: Props) {
               {(f) => <option value={f}>{f.toUpperCase()}</option>}
             </For>
           </select>
+        </Show>
+
+        <Show when={tool() === "servicescan"}>
+          <input
+            class="nops-input nops-input-small"
+            type="text"
+            placeholder="Ports (e.g. 22,80,443)"
+            value={props.store.extraParam()}
+            onInput={(e) => props.store.setExtraParam(e.currentTarget.value)}
+          />
         </Show>
 
         <Show when={tool() === "rogueap"}>
@@ -272,22 +300,41 @@ export default function ResultPanel(props: Props) {
               <Match when={res().kind === "wifi"}>
                 {(() => {
                   const d = res() as { kind: "wifi"; data: import("./types").WifiNetwork[] };
+                  function testHandshake(network: import("./types").WifiNetwork) {
+                    props.store.setActiveTool("handshake");
+                    props.store.setExtraParam(`${network.ssid}|${network.bssid}|${network.channel}|${network.security}|${network.rssi}`);
+                    props.store.setResult(null);
+                    props.store.setError("");
+                    props.store.runTool();
+                  }
                   return (
                     <div class="nops-output">
                       <div class="nops-result-header">WiFi NETWORKS ({d.data.length} found)</div>
                       <Show when={d.data.length > 0} fallback={<div class="nops-no-data">No networks found</div>}>
                         <table class="nops-table">
-                          <thead><tr><th>SSID</th><th>SIGNAL</th><th>CH</th><th>SECURITY</th></tr></thead>
+                          <thead><tr><th>SSID</th><th>BSSID</th><th>SIGNAL</th><th>CH</th><th>SECURITY</th><th>ACTION</th></tr></thead>
                           <tbody>
                             <For each={d.data}>
                               {(n) => (
                                 <tr>
                                   <td>{n.ssid || "(hidden)"}</td>
+                                  <td class="nops-bssid">{n.bssid}</td>
                                   <td class={n.rssi > -50 ? "nops-status-open" : n.rssi > -70 ? "nops-status-filtered" : "nops-status-closed"}>
                                     {n.rssi} dBm {signalBars(n.rssi)}
                                   </td>
                                   <td>{n.channel}</td>
                                   <td>{n.security}</td>
+                                  <td>
+                                    <Show when={n.security.toLowerCase().includes("wpa")}>
+                                      <button
+                                        class="nops-wifi-handshake-btn"
+                                        onClick={() => testHandshake(n)}
+                                        title={`Test WPA handshake for ${n.ssid || n.bssid}`}
+                                      >
+                                        🤝 HANDSHAKE
+                                      </button>
+                                    </Show>
+                                  </td>
                                 </tr>
                               )}
                             </For>
@@ -782,6 +829,347 @@ export default function ResultPanel(props: Props) {
                           </div>
                         )}
                       </For>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              {/* ═══ Kali-style tools ═══ */}
+
+              <Match when={res().kind === "servicescan"}>
+                {(() => {
+                  const d = res() as { kind: "servicescan"; data: import("./types").ServiceScanResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">SERVICE SCAN — {d.data.host} ({d.data.scan_time_ms}ms)</div>
+                      <Show when={d.data.services.length > 0} fallback={<div class="nops-no-data">No open services found</div>}>
+                        <table class="nops-table">
+                          <thead><tr><th>PORT</th><th>SERVICE</th><th>VERSION/BANNER</th></tr></thead>
+                          <tbody>
+                            <For each={d.data.services}>
+                              {(s) => (
+                                <tr>
+                                  <td class="nops-status-open">{s.port}</td>
+                                  <td>{s.service}</td>
+                                  <td style="font-size: 0.75rem; word-break: break-all">{s.version || s.banner || "—"}</td>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      </Show>
+                      <div class="nops-result-summary">{d.data.services.length} open services found</div>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "subenum"}>
+                {(() => {
+                  const d = res() as { kind: "subenum"; data: import("./types").SubdomainEnumResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">SUBDOMAIN ENUM — {d.data.domain} ({d.data.scan_time_ms}ms)</div>
+                      <div class="nops-kv"><span>TESTED</span><span>{d.data.tested_count}</span></div>
+                      <div class="nops-kv"><span>FOUND</span><span class="nops-status-open">{d.data.found_count}</span></div>
+                      <Show when={d.data.found.length > 0} fallback={<div class="nops-no-data">No subdomains found</div>}>
+                        <table class="nops-table" style="margin-top: 8px">
+                          <thead><tr><th>SUBDOMAIN</th><th>IPs</th><th>CNAME</th></tr></thead>
+                          <tbody>
+                            <For each={d.data.found}>
+                              {(s) => (
+                                <tr>
+                                  <td class="nops-status-open">{s.full_domain}</td>
+                                  <td>{s.ips.join(", ") || "—"}</td>
+                                  <td style="font-size: 0.75rem">{s.cname || "—"}</td>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "dirbust"}>
+                {(() => {
+                  const d = res() as { kind: "dirbust"; data: import("./types").DirBustResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">DIR BRUTE — {d.data.base_url} ({d.data.scan_time_ms}ms)</div>
+                      <div class="nops-kv"><span>TESTED</span><span>{d.data.tested_count}</span></div>
+                      <div class="nops-kv"><span>FOUND</span><span class="nops-status-open">{d.data.found_count}</span></div>
+                      <Show when={d.data.entries.length > 0} fallback={<div class="nops-no-data">No paths found</div>}>
+                        <table class="nops-table" style="margin-top: 8px">
+                          <thead><tr><th>PATH</th><th>STATUS</th><th>SIZE</th><th>REDIRECT</th></tr></thead>
+                          <tbody>
+                            <For each={d.data.entries}>
+                              {(e) => (
+                                <tr>
+                                  <td>{e.path}</td>
+                                  <td class={`nops-status-${e.status_code === 200 ? "open" : e.status_code === 403 || e.status_code === 401 ? "closed" : "filtered"}`}>
+                                    {e.status_code}
+                                  </td>
+                                  <td>{e.content_length > 0 ? `${e.content_length}B` : "—"}</td>
+                                  <td style="font-size: 0.7rem; word-break: break-all">{e.redirect_to || "—"}</td>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "webfinger"}>
+                {(() => {
+                  const d = res() as { kind: "webfinger"; data: import("./types").WebFingerprintResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">WEB FINGERPRINT — ({d.data.scan_time_ms}ms)</div>
+                      <Show when={d.data.server}><div class="nops-kv"><span>SERVER</span><span>{d.data.server}</span></div></Show>
+                      <Show when={d.data.powered_by}><div class="nops-kv"><span>POWERED BY</span><span>{d.data.powered_by}</span></div></Show>
+                      <Show when={d.data.technologies.length > 0} fallback={<div class="nops-no-data">No technologies detected</div>}>
+                        <div class="nops-panel-hdr" style="margin-top: 8px">DETECTED TECHNOLOGIES</div>
+                        <div class="nops-tech-grid">
+                          <For each={d.data.technologies}>
+                            {(t) => (
+                              <div class="nops-tech-card">
+                                <div class="nops-tech-name">{t.name}</div>
+                                <div class="nops-tech-category">{t.category}</div>
+                                <Show when={t.version}><div class="nops-tech-version">{t.version}</div></Show>
+                                <div class="nops-tech-evidence">{t.evidence}</div>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "wafdetect"}>
+                {(() => {
+                  const d = res() as { kind: "wafdetect"; data: import("./types").WafDetectResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">WAF DETECTION ({d.data.scan_time_ms}ms)</div>
+                      <div class={`nops-waf-status ${d.data.waf_detected ? "nops-waf-detected" : "nops-waf-none"}`}>
+                        {d.data.waf_detected ? `WAF DETECTED: ${d.data.waf_name}` : "NO WAF DETECTED"}
+                      </div>
+                      <div class="nops-kv"><span>NORMAL STATUS</span><span>{d.data.normal_status}</span></div>
+                      <div class="nops-kv"><span>PROBE STATUS</span><span class={d.data.blocked_status >= 400 ? "nops-status-closed" : ""}>{d.data.blocked_status || "—"}</span></div>
+                      <Show when={d.data.indicators.length > 0}>
+                        <div class="nops-panel-hdr" style="margin-top: 8px">INDICATORS</div>
+                        <For each={d.data.indicators}>
+                          {(ind) => (
+                            <div class="nops-kv">
+                              <span>{ind.name}</span>
+                              <span class={`nops-badge nops-badge-${ind.confidence === "high" ? "missing" : "warning"}`}>
+                                {ind.confidence.toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        </For>
+                        <div class="nops-panel-hdr" style="margin-top: 8px">EVIDENCE</div>
+                        <For each={d.data.indicators}>
+                          {(ind) => <div class="nops-list-item" style="font-size: 0.75rem">{ind.evidence}</div>}
+                        </For>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "webvuln"}>
+                {(() => {
+                  const d = res() as { kind: "webvuln"; data: import("./types").WebVulnResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">VULN SCAN — {d.data.target} ({d.data.scan_time_ms}ms)</div>
+                      <div class="nops-vuln-summary">
+                        <span class="nops-badge nops-badge-critical">{d.data.critical_count} CRITICAL</span>
+                        <span class="nops-badge nops-badge-high">{d.data.high_count} HIGH</span>
+                        <span class="nops-badge nops-badge-medium">{d.data.medium_count} MEDIUM</span>
+                        <span class="nops-badge nops-badge-low">{d.data.low_count} LOW</span>
+                      </div>
+                      <Show when={d.data.findings.length > 0} fallback={<div class="nops-no-data">No vulnerabilities found</div>}>
+                        <For each={d.data.findings}>
+                          {(f) => (
+                            <div class={`nops-vuln-card nops-severity-${f.severity}`}>
+                              <div class="nops-vuln-title">
+                                <span class={`nops-badge nops-badge-${f.severity}`}>{f.severity.toUpperCase()}</span>
+                                {f.title}
+                              </div>
+                              <div class="nops-vuln-detail">{f.detail}</div>
+                              <div class="nops-vuln-remediation">FIX: {f.remediation}</div>
+                            </div>
+                          )}
+                        </For>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "hashid"}>
+                {(() => {
+                  const d = res() as { kind: "hashid"; data: import("./types").HashIdResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">HASH IDENTIFIER ({d.data.query_time_ms}ms)</div>
+                      <div class="nops-kv"><span>INPUT LENGTH</span><span>{d.data.length} chars</span></div>
+                      <div class="nops-kv"><span>BASE64</span><span class={d.data.is_base64 ? "nops-status-open" : ""}>{d.data.is_base64 ? "YES" : "NO"}</span></div>
+                      <Show when={d.data.matches.length > 0} fallback={<div class="nops-no-data">No hash type identified</div>}>
+                        <div class="nops-panel-hdr" style="margin-top: 8px">MATCHES</div>
+                        <For each={d.data.matches}>
+                          {(m) => (
+                            <div class="nops-kv" style="flex-wrap: wrap; gap: 4px">
+                              <span style="font-weight: 600">{m.hash_type}</span>
+                              <span class={`nops-badge nops-badge-${m.confidence === "high" ? "good" : m.confidence === "medium" ? "warning" : "missing"}`}>
+                                {m.confidence.toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                        </For>
+                        <div class="nops-panel-hdr" style="margin-top: 8px">DETAILS</div>
+                        <For each={d.data.matches}>
+                          {(m) => <div class="nops-list-item">{m.hash_type}: {m.description}</div>}
+                        </For>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "cipherscan"}>
+                {(() => {
+                  const d = res() as { kind: "cipherscan"; data: import("./types").CipherScanResult };
+                  const gradeClass = () => {
+                    const g = d.data.grade;
+                    if (g === "A") return "nops-grade-a";
+                    if (g === "B") return "nops-grade-b";
+                    if (g === "C") return "nops-grade-c";
+                    return "nops-grade-f";
+                  };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">CIPHER SCAN — {d.data.host} ({d.data.scan_time_ms}ms)</div>
+                      <div class="nops-score-gauge">
+                        <div class={`nops-grade-letter ${gradeClass()}`}>{d.data.grade}</div>
+                        <div class="nops-score-label">TLS GRADE</div>
+                      </div>
+                      <div class="nops-kv">
+                        <span>WEAK CIPHERS</span>
+                        <span class={d.data.has_weak_ciphers ? "nops-status-closed" : "nops-status-open"}>
+                          {d.data.has_weak_ciphers ? "YES" : "NO"}
+                        </span>
+                      </div>
+                      <Show when={d.data.preferred_cipher}>
+                        <div class="nops-kv"><span>PREFERRED</span><span>{d.data.preferred_cipher}</span></div>
+                      </Show>
+                      <div class="nops-panel-hdr" style="margin-top: 8px">PROTOCOLS</div>
+                      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px">
+                        <For each={d.data.supported_protocols}>
+                          {(p) => (
+                            <span class={`nops-proto-badge ${p === "TLSv1.0" || p === "TLSv1.1" ? "nops-proto-outdated" : "nops-proto-secure"}`}>
+                              {p}
+                            </span>
+                          )}
+                        </For>
+                      </div>
+                      <Show when={d.data.ciphers.length > 0}>
+                        <div class="nops-panel-hdr">CIPHERS</div>
+                        <table class="nops-table">
+                          <thead><tr><th>CIPHER</th><th>BITS</th><th>STRENGTH</th></tr></thead>
+                          <tbody>
+                            <For each={d.data.ciphers}>
+                              {(c) => (
+                                <tr>
+                                  <td style="font-size: 0.7rem">{c.name}</td>
+                                  <td>{c.bits || "—"}</td>
+                                  <td>
+                                    <span class={`nops-badge nops-cipher-${c.strength}`}>
+                                      {c.strength.toUpperCase()}
+                                    </span>
+                                  </td>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </Match>
+
+              <Match when={res().kind === "handshake"}>
+                {(() => {
+                  const d = res() as { kind: "handshake"; data: import("./types").HandshakeResult };
+                  return (
+                    <div class="nops-output">
+                      <div class="nops-result-header">WPA HANDSHAKE — {d.data.ssid} ({d.data.scan_time_ms}ms)</div>
+                      <div class={`nops-waf-status ${d.data.handshake_complete ? "nops-waf-none" : "nops-waf-detected"}`}>
+                        {d.data.handshake_complete ? "4-WAY HANDSHAKE COMPLETE" : "HANDSHAKE PENDING"}
+                      </div>
+                      <div class="nops-kv"><span>SSID</span><span>{d.data.ssid}</span></div>
+                      <div class="nops-kv"><span>BSSID</span><span>{d.data.bssid || "—"}</span></div>
+                      <div class="nops-kv"><span>SECURITY</span><span class="nops-status-open">{d.data.security_protocol}</span></div>
+                      <div class="nops-kv"><span>AUTH METHOD</span><span>{d.data.auth_method || "—"}</span></div>
+                      <div class="nops-kv"><span>PAIRWISE CIPHER</span><span>{d.data.pairwise_cipher}</span></div>
+                      <div class="nops-kv"><span>GROUP CIPHER</span><span>{d.data.group_cipher}</span></div>
+                      <div class="nops-kv"><span>RSSI</span><span class={d.data.rssi > -50 ? "nops-status-open" : d.data.rssi > -70 ? "nops-status-filtered" : "nops-status-closed"}>{d.data.rssi} dBm</span></div>
+                      <div class="nops-kv"><span>CHANNEL</span><span>{d.data.channel}</span></div>
+                      <Show when={d.data.noise !== 0}>
+                        <div class="nops-kv"><span>NOISE</span><span>{d.data.noise} dBm</span></div>
+                      </Show>
+
+                      <div class="nops-panel-hdr" style="margin-top: 10px">4-WAY HANDSHAKE</div>
+                      <div class="nops-handshake-steps">
+                        <For each={d.data.handshake_messages}>
+                          {(msg) => (
+                            <div class={`nops-handshake-step ${msg.status === "complete" ? "nops-handshake-complete" : "nops-handshake-pending"}`}>
+                              <div class="nops-handshake-step-num">{msg.step}</div>
+                              <div class="nops-handshake-step-name">{msg.name}</div>
+                              <div class="nops-handshake-step-desc">{msg.description}</div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+
+                      <Show when={d.data.events.length > 0}>
+                        <div class="nops-panel-hdr" style="margin-top: 10px">EAPOL EVENTS</div>
+                        <table class="nops-table">
+                          <thead><tr><th>TIME</th><th>TYPE</th><th>MESSAGE</th></tr></thead>
+                          <tbody>
+                            <For each={d.data.events.slice(0, 30)}>
+                              {(ev) => (
+                                <tr>
+                                  <td style="white-space: nowrap; font-size: 0.7rem">{ev.timestamp}</td>
+                                  <td class={
+                                    ev.event_type === "eapol" || ev.event_type === "4-way" ? "nops-status-open" :
+                                    ev.event_type === "ptk" || ev.event_type === "gtk" ? "nops-status-filtered" : ""
+                                  }>
+                                    {ev.event_type.toUpperCase()}
+                                  </td>
+                                  <td style="font-size: 0.7rem; word-break: break-all">{ev.message}</td>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                        <div class="nops-result-summary">{d.data.events.length} events found</div>
+                      </Show>
+
+                      <Show when={d.data.events.length === 0}>
+                        <div class="nops-no-data" style="margin-top: 8px">No EAPOL events in last 30 minutes</div>
+                      </Show>
                     </div>
                   );
                 })()}

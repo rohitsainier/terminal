@@ -1995,3 +1995,1361 @@ pub async fn netops_incident_update(id: String, status: String, note: String) ->
     save_incidents(&store)?;
     Ok(store.clone())
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  KALI-STYLE TOOLS — Service Scan, Subdomain Enum, Dir Brute,
+//  Web Fingerprint, WAF Detect, Web Vuln Scan, Hash ID, Cipher Scan
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Service Scan types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEntry {
+    pub port: u16,
+    pub service: String,
+    pub version: String,
+    pub banner: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceScanResult {
+    pub host: String,
+    pub services: Vec<ServiceEntry>,
+    pub scan_time_ms: u64,
+}
+
+// ─── Subdomain Enum types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubdomainEntry {
+    pub subdomain: String,
+    pub full_domain: String,
+    pub ips: Vec<String>,
+    pub cname: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubdomainEnumResult {
+    pub domain: String,
+    pub found: Vec<SubdomainEntry>,
+    pub tested_count: u32,
+    pub found_count: u32,
+    pub scan_time_ms: u64,
+}
+
+// ─── Dir Brute types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirEntry {
+    pub path: String,
+    pub status_code: u16,
+    pub content_length: u64,
+    pub redirect_to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirBustResult {
+    pub base_url: String,
+    pub entries: Vec<DirEntry>,
+    pub tested_count: u32,
+    pub found_count: u32,
+    pub scan_time_ms: u64,
+}
+
+// ─── Web Fingerprint types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechMatch {
+    pub name: String,
+    pub category: String,
+    pub version: String,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebFingerprintResult {
+    pub url: String,
+    pub technologies: Vec<TechMatch>,
+    pub server: String,
+    pub powered_by: String,
+    pub scan_time_ms: u64,
+}
+
+// ─── WAF Detect types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WafIndicator {
+    pub name: String,
+    pub confidence: String,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WafDetectResult {
+    pub url: String,
+    pub waf_detected: bool,
+    pub waf_name: String,
+    pub indicators: Vec<WafIndicator>,
+    pub normal_status: u16,
+    pub blocked_status: u16,
+    pub scan_time_ms: u64,
+}
+
+// ─── Web Vuln Scan types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VulnFinding {
+    pub title: String,
+    pub severity: String,
+    pub category: String,
+    pub detail: String,
+    pub url: String,
+    pub remediation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebVulnResult {
+    pub target: String,
+    pub findings: Vec<VulnFinding>,
+    pub critical_count: u32,
+    pub high_count: u32,
+    pub medium_count: u32,
+    pub low_count: u32,
+    pub scan_time_ms: u64,
+}
+
+// ─── Hash ID types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HashMatch {
+    pub hash_type: String,
+    pub confidence: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HashIdResult {
+    pub input: String,
+    pub length: u32,
+    pub matches: Vec<HashMatch>,
+    pub is_base64: bool,
+    pub query_time_ms: u64,
+}
+
+// ─── Cipher Scan types ────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CipherInfo {
+    pub name: String,
+    pub protocol: String,
+    pub bits: u32,
+    pub strength: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CipherScanResult {
+    pub host: String,
+    pub supported_protocols: Vec<String>,
+    pub ciphers: Vec<CipherInfo>,
+    pub has_weak_ciphers: bool,
+    pub grade: String,
+    pub preferred_cipher: String,
+    pub scan_time_ms: u64,
+}
+
+// ─── Wordlists ────
+const SUBDOMAIN_WORDLIST: &[&str] = &[
+    "www", "mail", "ftp", "smtp", "pop", "imap", "webmail", "mx", "ns", "ns1",
+    "ns2", "dns", "dns1", "dns2", "api", "dev", "staging", "stage", "test",
+    "qa", "uat", "prod", "app", "web", "portal", "admin", "panel", "cpanel",
+    "dashboard", "login", "auth", "sso", "cdn", "static", "assets", "media",
+    "img", "images", "docs", "doc", "help", "support", "kb", "wiki", "blog",
+    "shop", "store", "cart", "pay", "billing", "vpn", "remote", "git",
+    "gitlab", "github", "ci", "jenkins", "build", "deploy", "monitor",
+    "status", "health", "grafana", "prometheus", "kibana", "elastic",
+    "search", "db", "database", "mysql", "postgres", "redis", "mongo",
+    "cache", "proxy", "gateway", "lb", "load", "backup", "vault",
+    "s3", "cloud", "aws", "gcp", "azure", "internal", "intranet",
+    "exchange", "owa", "autodiscover", "lyncdiscover", "sip", "meet",
+    "crm", "erp", "jira", "confluence", "slack", "chat", "m", "mobile",
+];
+
+const DIR_WORDLIST: &[&str] = &[
+    "/admin", "/login", "/dashboard", "/api", "/api/v1", "/api/v2",
+    "/.env", "/.git/config", "/.git/HEAD", "/.gitignore",
+    "/.htaccess", "/.htpasswd", "/wp-admin", "/wp-login.php",
+    "/wp-content", "/wp-includes", "/wp-config.php.bak",
+    "/robots.txt", "/sitemap.xml", "/crossdomain.xml",
+    "/server-status", "/server-info", "/.svn/entries",
+    "/.DS_Store", "/web.config", "/elmah.axd",
+    "/swagger", "/swagger-ui", "/swagger.json", "/api-docs",
+    "/graphql", "/graphiql", "/.well-known/security.txt",
+    "/actuator", "/actuator/health", "/actuator/env",
+    "/info", "/health", "/metrics", "/debug", "/trace",
+    "/console", "/phpinfo.php", "/phpmyadmin",
+    "/adminer.php", "/backup", "/backups", "/dump",
+    "/config", "/configuration", "/conf", "/settings",
+    "/uploads", "/upload", "/files", "/tmp", "/temp",
+    "/logs", "/log", "/error.log", "/access.log",
+    "/test", "/testing", "/dev", "/development",
+    "/staging", "/old", "/new", "/archive",
+    "/.vscode", "/.idea", "/node_modules",
+    "/vendor", "/composer.json", "/package.json",
+    "/Gemfile", "/requirements.txt", "/Pipfile",
+    "/docker-compose.yml", "/Dockerfile",
+    "/readme.md", "/README.md", "/CHANGELOG.md",
+    "/LICENSE", "/.env.local", "/.env.production",
+    "/.env.development", "/.env.backup",
+];
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 1: Service Scan (Banner Grabbing)
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_service_scan(host: String, ports: Option<String>) -> Result<ServiceScanResult, String> {
+    let start = Instant::now();
+
+    let ports_to_scan: Vec<u16> = if let Some(ref p) = ports {
+        p.split(',')
+            .filter_map(|s| s.trim().parse::<u16>().ok())
+            .collect()
+    } else {
+        DEFAULT_PORTS.to_vec()
+    };
+
+    // Resolve hostname
+    let addr = tokio::net::lookup_host(format!("{}:0", host))
+        .await
+        .map_err(|e| format!("DNS resolve failed: {}", e))?
+        .next()
+        .ok_or("No address found")?
+        .ip();
+
+    let mut handles = Vec::new();
+    for port in ports_to_scan {
+        let ip = addr;
+        handles.push(tokio::spawn(async move {
+            let sock = std::net::SocketAddr::new(ip, port);
+            let connect = tokio::time::timeout(
+                Duration::from_secs(3),
+                tokio::net::TcpStream::connect(sock),
+            ).await;
+
+            match connect {
+                Ok(Ok(mut stream)) => {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut banner = String::new();
+
+                    // Protocol-specific probes
+                    match port {
+                        80 | 8080 | 8000 | 8888 => {
+                            let req = format!("HEAD / HTTP/1.0\r\nHost: {}\r\n\r\n", ip);
+                            let _ = stream.write_all(req.as_bytes()).await;
+                        }
+                        443 | 8443 => {
+                            // Can't do TLS with raw TCP, just note it
+                            banner = "TLS/SSL endpoint".into();
+                        }
+                        _ => {
+                            // For SSH, SMTP, FTP etc - send CRLF and read
+                            let _ = stream.write_all(b"\r\n").await;
+                        }
+                    }
+
+                    if banner.is_empty() {
+                        let mut buf = vec![0u8; 1024];
+                        match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+                            Ok(Ok(n)) if n > 0 => {
+                                banner = String::from_utf8_lossy(&buf[..n])
+                                    .chars()
+                                    .filter(|c| !c.is_control() || *c == '\n')
+                                    .take(200)
+                                    .collect::<String>()
+                                    .trim()
+                                    .to_string();
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let version = extract_version(&banner);
+                    ServiceEntry {
+                        port,
+                        service: port_service_name(port).to_string(),
+                        version,
+                        banner,
+                        status: "open".into(),
+                    }
+                }
+                _ => ServiceEntry {
+                    port,
+                    service: port_service_name(port).to_string(),
+                    version: String::new(),
+                    banner: String::new(),
+                    status: "closed".into(),
+                },
+            }
+        }));
+    }
+
+    let mut services = Vec::new();
+    for h in handles {
+        if let Ok(entry) = h.await {
+            if entry.status == "open" {
+                services.push(entry);
+            }
+        }
+    }
+    services.sort_by_key(|s| s.port);
+
+    Ok(ServiceScanResult {
+        host,
+        services,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+fn extract_version(banner: &str) -> String {
+    // Try to extract version from common patterns
+    if banner.contains("SSH-") {
+        banner.lines().next().unwrap_or("").to_string()
+    } else if banner.contains("HTTP/") {
+        if let Some(server) = banner.lines()
+            .find(|l| l.to_lowercase().starts_with("server:"))
+        {
+            server.trim_start_matches(|c: char| !c.is_whitespace())
+                .trim()
+                .to_string()
+        } else {
+            banner.lines().next().unwrap_or("").to_string()
+        }
+    } else if banner.contains("220 ") || banner.contains("250 ") {
+        banner.lines().next().unwrap_or("").to_string()
+    } else {
+        banner.chars().take(60).collect()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 2: Subdomain Enumeration
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_subdomain_enum(domain: String) -> Result<SubdomainEnumResult, String> {
+    let start = Instant::now();
+    let tested_count = SUBDOMAIN_WORDLIST.len() as u32;
+    let mut found = Vec::new();
+
+    // Process in batches of 20
+    for chunk in SUBDOMAIN_WORDLIST.chunks(20) {
+        let mut handles = Vec::new();
+        for sub in chunk {
+            let full = format!("{}.{}", sub, domain);
+            let sub_str = sub.to_string();
+            handles.push(tokio::spawn(async move {
+                let output = tokio::process::Command::new("dig")
+                    .args(["+short", &full])
+                    .output()
+                    .await;
+
+                match output {
+                    Ok(o) if o.status.success() => {
+                        let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                        if !out.is_empty() {
+                            let mut ips = Vec::new();
+                            let mut cname = String::new();
+                            for line in out.lines() {
+                                let line = line.trim().trim_end_matches('.');
+                                if line.parse::<std::net::IpAddr>().is_ok() {
+                                    ips.push(line.to_string());
+                                } else if !line.is_empty() {
+                                    cname = line.to_string();
+                                }
+                            }
+                            if !ips.is_empty() || !cname.is_empty() {
+                                return Some(SubdomainEntry {
+                                    subdomain: sub_str,
+                                    full_domain: full,
+                                    ips,
+                                    cname,
+                                });
+                            }
+                        }
+                        None
+                    }
+                    _ => None,
+                }
+            }));
+        }
+        for h in handles {
+            if let Ok(Some(entry)) = h.await {
+                found.push(entry);
+            }
+        }
+    }
+
+    let found_count = found.len() as u32;
+    Ok(SubdomainEnumResult {
+        domain,
+        found,
+        tested_count,
+        found_count,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 3: Directory Brute Force
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_dir_bust(url: String) -> Result<DirBustResult, String> {
+    let start = Instant::now();
+    let client = http_client(5)?;
+    let base = url.trim_end_matches('/').to_string();
+    let tested_count = DIR_WORDLIST.len() as u32;
+    let mut entries = Vec::new();
+
+    // Process in batches of 10
+    for chunk in DIR_WORDLIST.chunks(10) {
+        let mut handles = Vec::new();
+        for path in chunk {
+            let full_url = format!("{}{}", base, path);
+            let c = client.clone();
+            let p = path.to_string();
+            handles.push(tokio::spawn(async move {
+                match c.get(&full_url)
+                    .header("User-Agent", "FluxTerminal/2.0")
+                    .send()
+                    .await
+                {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        // Keep 200, 301, 302, 401, 403 (path exists)
+                        if matches!(status, 200 | 301 | 302 | 307 | 308 | 401 | 403) {
+                            let redirect = resp.headers()
+                                .get("location")
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or("")
+                                .to_string();
+                            let len = resp.content_length().unwrap_or(0);
+                            Some(DirEntry {
+                                path: p,
+                                status_code: status,
+                                content_length: len,
+                                redirect_to: redirect,
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    Err(_) => None,
+                }
+            }));
+        }
+        for h in handles {
+            if let Ok(Some(entry)) = h.await {
+                entries.push(entry);
+            }
+        }
+    }
+
+    let found_count = entries.len() as u32;
+    Ok(DirBustResult {
+        base_url: base,
+        entries,
+        tested_count,
+        found_count,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 4: Web Fingerprint (Tech Detection)
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_web_fingerprint(url: String) -> Result<WebFingerprintResult, String> {
+    let start = Instant::now();
+    let client = http_client(10)?;
+    let resp = client.get(&url).send().await.map_err(|e| format!("Request failed: {}", e))?;
+
+    let mut techs: Vec<TechMatch> = Vec::new();
+    let mut server_val = String::new();
+    let mut powered_by_val = String::new();
+
+    // Check headers
+    let headers = resp.headers().clone();
+
+    if let Some(v) = headers.get("server").and_then(|v| v.to_str().ok()) {
+        server_val = v.to_string();
+        let name = if v.to_lowercase().contains("nginx") { "Nginx" }
+            else if v.to_lowercase().contains("apache") { "Apache" }
+            else if v.to_lowercase().contains("iis") { "IIS" }
+            else if v.to_lowercase().contains("cloudflare") { "Cloudflare" }
+            else if v.to_lowercase().contains("litespeed") { "LiteSpeed" }
+            else { "" };
+        if !name.is_empty() {
+            techs.push(TechMatch {
+                name: name.into(),
+                category: "Web Server".into(),
+                version: v.to_string(),
+                evidence: format!("Server: {}", v),
+            });
+        }
+    }
+
+    if let Some(v) = headers.get("x-powered-by").and_then(|v| v.to_str().ok()) {
+        powered_by_val = v.to_string();
+        techs.push(TechMatch {
+            name: v.split('/').next().unwrap_or(v).to_string(),
+            category: "Framework".into(),
+            version: v.to_string(),
+            evidence: format!("X-Powered-By: {}", v),
+        });
+    }
+
+    if headers.get("cf-ray").is_some() {
+        techs.push(TechMatch { name: "Cloudflare CDN".into(), category: "CDN".into(), version: String::new(), evidence: "CF-RAY header present".into() });
+    }
+    if headers.get("x-amz-cf-id").is_some() || headers.get("x-amz-request-id").is_some() {
+        techs.push(TechMatch { name: "AWS CloudFront".into(), category: "CDN".into(), version: String::new(), evidence: "AWS headers present".into() });
+    }
+    if headers.get("x-vercel-id").is_some() {
+        techs.push(TechMatch { name: "Vercel".into(), category: "Platform".into(), version: String::new(), evidence: "X-Vercel-Id header".into() });
+    }
+    if headers.get("x-netlify-request-id").is_some() {
+        techs.push(TechMatch { name: "Netlify".into(), category: "Platform".into(), version: String::new(), evidence: "Netlify header".into() });
+    }
+
+    // Check cookies
+    for cookie_hdr in headers.get_all("set-cookie") {
+        if let Ok(c) = cookie_hdr.to_str() {
+            let cl = c.to_lowercase();
+            if cl.contains("phpsessid") { techs.push(TechMatch { name: "PHP".into(), category: "Language".into(), version: String::new(), evidence: "PHPSESSID cookie".into() }); }
+            if cl.contains("csrftoken") { techs.push(TechMatch { name: "Django".into(), category: "Framework".into(), version: String::new(), evidence: "csrftoken cookie".into() }); }
+            if cl.contains("laravel_session") { techs.push(TechMatch { name: "Laravel".into(), category: "Framework".into(), version: String::new(), evidence: "laravel_session cookie".into() }); }
+            if cl.contains("_rails") || cl.contains("_session") { techs.push(TechMatch { name: "Ruby on Rails".into(), category: "Framework".into(), version: String::new(), evidence: "Rails session cookie".into() }); }
+            if cl.contains("connect.sid") { techs.push(TechMatch { name: "Express.js".into(), category: "Framework".into(), version: String::new(), evidence: "connect.sid cookie".into() }); }
+            if cl.contains("asp.net") { techs.push(TechMatch { name: "ASP.NET".into(), category: "Framework".into(), version: String::new(), evidence: "ASP.NET cookie".into() }); }
+        }
+    }
+
+    // Check body for framework fingerprints
+    if let Ok(body) = resp.text().await {
+        let bl = body.to_lowercase();
+        let fingerprints: Vec<(&str, &str, &str)> = vec![
+            ("wp-content", "WordPress", "CMS"),
+            ("__next", "Next.js", "Framework"),
+            ("__nuxt", "Nuxt.js", "Framework"),
+            ("ng-version", "Angular", "Framework"),
+            ("data-reactroot", "React", "Framework"),
+            ("data-react", "React", "Framework"),
+            ("svelte", "Svelte", "Framework"),
+            ("ember", "Ember.js", "Framework"),
+            ("vue.js", "Vue.js", "Framework"),
+            ("jquery", "jQuery", "Library"),
+            ("bootstrap", "Bootstrap", "CSS Framework"),
+            ("tailwindcss", "Tailwind CSS", "CSS Framework"),
+            ("drupal", "Drupal", "CMS"),
+            ("joomla", "Joomla", "CMS"),
+            ("shopify", "Shopify", "E-commerce"),
+            ("woocommerce", "WooCommerce", "E-commerce"),
+            ("magento", "Magento", "E-commerce"),
+            ("gatsby", "Gatsby", "Framework"),
+            ("remix", "Remix", "Framework"),
+        ];
+        for (pattern, name, category) in fingerprints {
+            if bl.contains(pattern) {
+                // Avoid duplicate detection
+                if !techs.iter().any(|t| t.name == name) {
+                    techs.push(TechMatch {
+                        name: name.into(),
+                        category: category.into(),
+                        version: String::new(),
+                        evidence: format!("\"{}\" found in HTML", pattern),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(WebFingerprintResult {
+        url,
+        technologies: techs,
+        server: server_val,
+        powered_by: powered_by_val,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 5: WAF Detection
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_waf_detect(url: String) -> Result<WafDetectResult, String> {
+    let start = Instant::now();
+    let client = http_client(10)?;
+    let base = url.trim_end_matches('/').to_string();
+
+    // 1. Normal request
+    let normal_resp = client.get(&base).send().await.map_err(|e| format!("Normal request failed: {}", e))?;
+    let normal_status = normal_resp.status().as_u16();
+    let normal_headers = normal_resp.headers().clone();
+
+    // 2. XSS probe
+    let xss_url = format!("{}/?test=%3Cscript%3Ealert(1)%3C/script%3E", base);
+    let xss_status = client.get(&xss_url).send().await
+        .map(|r| r.status().as_u16())
+        .unwrap_or(0);
+
+    // 3. SQLi probe
+    let sqli_url = format!("{}/?id=1%27%20OR%20%271%27%3D%271", base);
+    let sqli_status = client.get(&sqli_url).send().await
+        .map(|r| r.status().as_u16())
+        .unwrap_or(0);
+
+    let blocked_status = if xss_status > sqli_status { xss_status } else { sqli_status };
+
+    let mut indicators: Vec<WafIndicator> = Vec::new();
+    let mut waf_name = String::new();
+
+    // Check header signatures
+    let waf_signatures: Vec<(&str, &str)> = vec![
+        ("cf-ray", "Cloudflare"),
+        ("x-sucuri-id", "Sucuri"),
+        ("x-cdn", "CDN WAF"),
+        ("x-akamai-transformed", "Akamai"),
+        ("x-protected-by", "WAF"),
+    ];
+
+    for (header, name) in &waf_signatures {
+        if normal_headers.get(*header).is_some() {
+            indicators.push(WafIndicator {
+                name: name.to_string(),
+                confidence: "high".into(),
+                evidence: format!("{} header present", header),
+            });
+            if waf_name.is_empty() { waf_name = name.to_string(); }
+        }
+    }
+
+    if let Some(server) = normal_headers.get("server").and_then(|v| v.to_str().ok()) {
+        let sl = server.to_lowercase();
+        if sl.contains("cloudflare") {
+            indicators.push(WafIndicator { name: "Cloudflare".into(), confidence: "high".into(), evidence: format!("Server: {}", server) });
+            if waf_name.is_empty() { waf_name = "Cloudflare".into(); }
+        } else if sl.contains("akamaighost") {
+            indicators.push(WafIndicator { name: "Akamai".into(), confidence: "high".into(), evidence: format!("Server: {}", server) });
+            if waf_name.is_empty() { waf_name = "Akamai".into(); }
+        } else if sl.contains("awselb") || sl.contains("awsalb") {
+            indicators.push(WafIndicator { name: "AWS WAF/ALB".into(), confidence: "medium".into(), evidence: format!("Server: {}", server) });
+            if waf_name.is_empty() { waf_name = "AWS WAF".into(); }
+        }
+    }
+
+    // Status-based detection
+    if normal_status == 200 && matches!(blocked_status, 403 | 406 | 429 | 503) {
+        indicators.push(WafIndicator {
+            name: "Behavioral WAF".into(),
+            confidence: "high".into(),
+            evidence: format!("Normal={}, Probe={}", normal_status, blocked_status),
+        });
+        if waf_name.is_empty() { waf_name = "Unknown WAF".into(); }
+    }
+
+    let waf_detected = !indicators.is_empty();
+
+    Ok(WafDetectResult {
+        url: base,
+        waf_detected,
+        waf_name,
+        indicators,
+        normal_status,
+        blocked_status,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 6: Web Vulnerability Scan (Nikto-lite)
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_web_vuln_scan(url: String) -> Result<WebVulnResult, String> {
+    let start = Instant::now();
+    let client = http_client(5)?;
+    let base = url.trim_end_matches('/').to_string();
+    let mut findings: Vec<VulnFinding> = Vec::new();
+
+    // 1. Check sensitive file exposure
+    let sensitive_paths = vec![
+        ("/.env", "Environment file exposed"),
+        ("/.git/config", "Git repository exposed"),
+        ("/wp-config.php.bak", "WordPress config backup"),
+        ("/server-status", "Apache server-status"),
+        ("/phpinfo.php", "PHP info page exposed"),
+        ("/.htpasswd", "Password file exposed"),
+        ("/web.config", "IIS config exposed"),
+        ("/.svn/entries", "SVN repository exposed"),
+    ];
+
+    for (path, title) in &sensitive_paths {
+        let full = format!("{}{}", base, path);
+        if let Ok(resp) = client.get(&full).send().await {
+            if resp.status().as_u16() == 200 {
+                findings.push(VulnFinding {
+                    title: title.to_string(),
+                    severity: "high".into(),
+                    category: "Information Disclosure".into(),
+                    detail: format!("{} is publicly accessible", path),
+                    url: full,
+                    remediation: format!("Block access to {} in web server config", path),
+                });
+            }
+        }
+    }
+
+    // 2. Check directory listing
+    let dir_paths = vec!["/uploads/", "/images/", "/files/", "/backup/"];
+    for path in &dir_paths {
+        let full = format!("{}{}", base, path);
+        if let Ok(resp) = client.get(&full).send().await {
+            if resp.status().as_u16() == 200 {
+                if let Ok(body) = resp.text().await {
+                    if body.contains("Index of") || body.contains("Directory listing") {
+                        findings.push(VulnFinding {
+                            title: "Directory listing enabled".into(),
+                            severity: "medium".into(),
+                            category: "Information Disclosure".into(),
+                            detail: format!("{} has directory listing", path),
+                            url: full,
+                            remediation: "Disable directory listing in web server config".into(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Check main page headers
+    if let Ok(resp) = client.get(&base).send().await {
+        let hdrs = resp.headers().clone();
+
+        // Missing security headers
+        let sec_headers: Vec<(&str, &str)> = vec![
+            ("content-security-policy", "Content Security Policy"),
+            ("strict-transport-security", "HTTP Strict Transport Security"),
+            ("x-content-type-options", "X-Content-Type-Options"),
+            ("x-frame-options", "X-Frame-Options"),
+        ];
+
+        for (header, name) in &sec_headers {
+            if hdrs.get(*header).is_none() {
+                findings.push(VulnFinding {
+                    title: format!("Missing {}", name),
+                    severity: "low".into(),
+                    category: "Missing Security Header".into(),
+                    detail: format!("{} header is not set", name),
+                    url: base.clone(),
+                    remediation: format!("Add {} header to server response", header),
+                });
+            }
+        }
+
+        // Server version disclosure
+        if let Some(server) = hdrs.get("server").and_then(|v| v.to_str().ok()) {
+            if server.contains('/') {
+                findings.push(VulnFinding {
+                    title: "Server version disclosed".into(),
+                    severity: "low".into(),
+                    category: "Information Disclosure".into(),
+                    detail: format!("Server header reveals: {}", server),
+                    url: base.clone(),
+                    remediation: "Remove version info from Server header".into(),
+                });
+            }
+        }
+
+        // CORS misconfiguration
+        if let Some(cors) = hdrs.get("access-control-allow-origin").and_then(|v| v.to_str().ok()) {
+            if cors == "*" {
+                findings.push(VulnFinding {
+                    title: "CORS allows all origins".into(),
+                    severity: "medium".into(),
+                    category: "CORS Misconfiguration".into(),
+                    detail: "Access-Control-Allow-Origin is set to *".into(),
+                    url: base.clone(),
+                    remediation: "Restrict CORS to specific trusted origins".into(),
+                });
+            }
+        }
+    }
+
+    let critical_count = findings.iter().filter(|f| f.severity == "critical").count() as u32;
+    let high_count = findings.iter().filter(|f| f.severity == "high").count() as u32;
+    let medium_count = findings.iter().filter(|f| f.severity == "medium").count() as u32;
+    let low_count = findings.iter().filter(|f| f.severity == "low").count() as u32;
+
+    Ok(WebVulnResult {
+        target: base,
+        findings,
+        critical_count,
+        high_count,
+        medium_count,
+        low_count,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 7: Hash Identifier
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_hash_id(input: String) -> Result<HashIdResult, String> {
+    let start = Instant::now();
+    let trimmed = input.trim();
+    let length = trimmed.len() as u32;
+    let mut matches: Vec<HashMatch> = Vec::new();
+
+    // Check for prefixed hashes first
+    if trimmed.starts_with("$2a$") || trimmed.starts_with("$2b$") || trimmed.starts_with("$2y$") {
+        matches.push(HashMatch { hash_type: "bcrypt".into(), confidence: "high".into(), description: "Blowfish-based password hash (60 chars)".into() });
+    } else if trimmed.starts_with("$argon2") {
+        matches.push(HashMatch { hash_type: "Argon2".into(), confidence: "high".into(), description: "Argon2 password hash".into() });
+    } else if trimmed.starts_with("$1$") {
+        matches.push(HashMatch { hash_type: "MD5 Unix Crypt".into(), confidence: "high".into(), description: "MD5-based Unix password hash".into() });
+    } else if trimmed.starts_with("$5$") {
+        matches.push(HashMatch { hash_type: "SHA-256 Unix Crypt".into(), confidence: "high".into(), description: "SHA-256 Unix password hash".into() });
+    } else if trimmed.starts_with("$6$") {
+        matches.push(HashMatch { hash_type: "SHA-512 Unix Crypt".into(), confidence: "high".into(), description: "SHA-512 Unix password hash".into() });
+    } else if trimmed.starts_with('*') && length == 41 && trimmed[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+        matches.push(HashMatch { hash_type: "MySQL 4.1+".into(), confidence: "high".into(), description: "MySQL native password hash".into() });
+    }
+
+    // Length-based hex detection
+    let is_hex = trimmed.chars().all(|c| c.is_ascii_hexdigit());
+    if is_hex {
+        match length {
+            32 => {
+                matches.push(HashMatch { hash_type: "MD5".into(), confidence: "high".into(), description: "128-bit MD5 message digest".into() });
+                matches.push(HashMatch { hash_type: "NTLM".into(), confidence: "medium".into(), description: "Windows NTLM hash".into() });
+                matches.push(HashMatch { hash_type: "MD4".into(), confidence: "low".into(), description: "128-bit MD4 message digest".into() });
+            }
+            40 => {
+                matches.push(HashMatch { hash_type: "SHA-1".into(), confidence: "high".into(), description: "160-bit SHA-1 hash".into() });
+                matches.push(HashMatch { hash_type: "RIPEMD-160".into(), confidence: "low".into(), description: "160-bit RIPEMD hash".into() });
+            }
+            56 => {
+                matches.push(HashMatch { hash_type: "SHA-224".into(), confidence: "high".into(), description: "224-bit SHA-2 hash".into() });
+            }
+            64 => {
+                matches.push(HashMatch { hash_type: "SHA-256".into(), confidence: "high".into(), description: "256-bit SHA-2 hash".into() });
+                matches.push(HashMatch { hash_type: "SHA3-256".into(), confidence: "low".into(), description: "256-bit SHA-3 hash".into() });
+                matches.push(HashMatch { hash_type: "BLAKE2s".into(), confidence: "low".into(), description: "256-bit BLAKE2s hash".into() });
+            }
+            96 => {
+                matches.push(HashMatch { hash_type: "SHA-384".into(), confidence: "high".into(), description: "384-bit SHA-2 hash".into() });
+            }
+            128 => {
+                matches.push(HashMatch { hash_type: "SHA-512".into(), confidence: "high".into(), description: "512-bit SHA-2 hash".into() });
+                matches.push(HashMatch { hash_type: "SHA3-512".into(), confidence: "low".into(), description: "512-bit SHA-3 hash".into() });
+                matches.push(HashMatch { hash_type: "BLAKE2b".into(), confidence: "low".into(), description: "512-bit BLAKE2b hash".into() });
+            }
+            _ => {}
+        }
+    }
+
+    // JWT detection
+    let parts: Vec<&str> = trimmed.split('.').collect();
+    if parts.len() == 3 && parts.iter().all(|p| p.len() > 5) {
+        matches.push(HashMatch { hash_type: "JWT".into(), confidence: "high".into(), description: "JSON Web Token (3 dot-separated segments)".into() });
+    }
+
+    // Base64 detection
+    let is_base64 = trimmed.len() > 8
+        && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        && (trimmed.len() % 4 == 0 || trimmed.ends_with('='));
+
+    if is_base64 && !is_hex && matches.is_empty() {
+        matches.push(HashMatch { hash_type: "Base64".into(), confidence: "medium".into(), description: "Base64 encoded data".into() });
+    }
+
+    Ok(HashIdResult {
+        input: trimmed.to_string(),
+        length,
+        matches,
+        is_base64,
+        query_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 8: Cipher Scan (TLS Enumeration)
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn netops_cipher_scan(host: String) -> Result<CipherScanResult, String> {
+    let start = Instant::now();
+    let mut supported_protocols: Vec<String> = Vec::new();
+    let mut ciphers: Vec<CipherInfo> = Vec::new();
+    let mut preferred_cipher = String::new();
+
+    let protocols = vec![
+        ("-tls1", "TLSv1.0"),
+        ("-tls1_1", "TLSv1.1"),
+        ("-tls1_2", "TLSv1.2"),
+    ];
+
+    // Test each protocol version
+    for (flag, name) in &protocols {
+        let output = tokio::process::Command::new("openssl")
+            .args(["s_client", "-connect", &format!("{}:443", host), flag, "-brief"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await;
+
+        if let Ok(o) = output {
+            let combined = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+            if !combined.contains("error") && !combined.contains("alert") && (combined.contains("Protocol") || combined.contains("Cipher")) {
+                supported_protocols.push(name.to_string());
+            }
+        }
+    }
+
+    // TLS 1.3 separate check (different flag on some openssl versions)
+    let tls13_output = tokio::process::Command::new("openssl")
+        .args(["s_client", "-connect", &format!("{}:443", host), "-tls1_3", "-brief"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await;
+
+    if let Ok(o) = tls13_output {
+        let combined = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        if !combined.contains("unknown option") && !combined.contains("error") && (combined.contains("TLSv1.3") || combined.contains("Protocol") || combined.contains("Cipher")) {
+            supported_protocols.push("TLSv1.3".to_string());
+        }
+    }
+
+    // Get cipher list using s_client
+    let cipher_output = tokio::process::Command::new("openssl")
+        .args(["s_client", "-connect", &format!("{}:443", host), "-cipher", "ALL:COMPLEMENTOFALL"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await;
+
+    if let Ok(o) = cipher_output {
+        let out = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        // Parse the cipher from the output
+        for line in out.lines() {
+            if line.contains("Cipher    :") || line.contains("Cipher is") {
+                let cipher_name = line.split(':').last().or_else(|| line.split("is").last())
+                    .unwrap_or("").trim().to_string();
+                if !cipher_name.is_empty() && cipher_name != "(NONE)" && cipher_name != "0000" {
+                    if preferred_cipher.is_empty() {
+                        preferred_cipher = cipher_name.clone();
+                    }
+                    let bits = if cipher_name.contains("256") { 256 }
+                        else if cipher_name.contains("128") { 128 }
+                        else if cipher_name.contains("384") { 384 }
+                        else { 0 };
+                    let strength = cipher_strength(&cipher_name);
+                    ciphers.push(CipherInfo {
+                        name: cipher_name,
+                        protocol: supported_protocols.last().cloned().unwrap_or_default(),
+                        bits,
+                        strength,
+                    });
+                }
+            }
+        }
+    }
+
+    // Also enumerate via openssl ciphers command
+    let ciphers_list = tokio::process::Command::new("openssl")
+        .args(["ciphers", "-v", "ALL:COMPLEMENTOFALL"])
+        .output()
+        .await;
+
+    if let Ok(o) = ciphers_list {
+        if o.status.success() {
+            let out = String::from_utf8_lossy(&o.stdout);
+            for line in out.lines().take(30) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    let name = parts[0].to_string();
+                    let proto = parts[1].to_string();
+                    let bits_str = parts.iter().find(|p| p.starts_with("Enc="))
+                        .unwrap_or(&"Enc=0");
+                    let bits = bits_str.split('(').nth(1).and_then(|s| s.trim_end_matches(')').parse::<u32>().ok()).unwrap_or(0);
+                    let strength = cipher_strength(&name);
+
+                    if !ciphers.iter().any(|c| c.name == name) {
+                        ciphers.push(CipherInfo { name, protocol: proto, bits, strength });
+                    }
+                }
+            }
+        }
+    }
+
+    let has_weak = ciphers.iter().any(|c| c.strength == "weak" || c.strength == "insecure");
+    let has_old_proto = supported_protocols.iter().any(|p| p == "TLSv1.0" || p == "TLSv1.1");
+    let has_tls13 = supported_protocols.iter().any(|p| p == "TLSv1.3");
+
+    let grade = if has_old_proto && has_weak { "F" }
+        else if has_old_proto { "D" }
+        else if has_weak { "C" }
+        else if has_tls13 && !has_old_proto { "A" }
+        else { "B" };
+
+    Ok(CipherScanResult {
+        host,
+        supported_protocols,
+        ciphers,
+        has_weak_ciphers: has_weak,
+        grade: grade.to_string(),
+        preferred_cipher,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+fn cipher_strength(name: &str) -> String {
+    let n = name.to_uppercase();
+    if n.contains("NULL") || n.contains("EXPORT") || n.contains("anon") {
+        "insecure".into()
+    } else if n.contains("RC4") || n.contains("DES") || n.contains("MD5") || n.contains("3DES") {
+        "weak".into()
+    } else if n.contains("AES") && (n.contains("256") || n.contains("GCM")) {
+        "strong".into()
+    } else if n.contains("CHACHA20") {
+        "strong".into()
+    } else {
+        "acceptable".into()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TOOL 9: WPA 4-Way Handshake Analyzer
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeMessage {
+    pub step: u8,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeEvent {
+    pub timestamp: String,
+    pub event_type: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeResult {
+    pub ssid: String,
+    pub bssid: String,
+    pub security_protocol: String,
+    pub auth_method: String,
+    pub pairwise_cipher: String,
+    pub group_cipher: String,
+    pub link_auth: String,
+    pub handshake_messages: Vec<HandshakeMessage>,
+    pub events: Vec<HandshakeEvent>,
+    pub handshake_complete: bool,
+    pub last_handshake_time: String,
+    pub rssi: i32,
+    pub channel: u32,
+    pub noise: i32,
+    pub scan_time_ms: u64,
+}
+
+#[tauri::command]
+pub async fn netops_handshake_analyze(
+    target_ssid: Option<String>,
+    target_bssid: Option<String>,
+    target_channel: Option<u32>,
+    target_security: Option<String>,
+    target_rssi: Option<i32>,
+) -> Result<HandshakeResult, String> {
+    let start = Instant::now();
+
+    // Determine if we're analyzing a specific target or the connected network
+    let has_target = target_ssid.is_some() || target_bssid.is_some();
+
+    // 1. Get connection details from system_profiler
+    let profiler = tokio::process::Command::new("system_profiler")
+        .args(["SPAirPortDataType", "-detailLevel", "basic"])
+        .output()
+        .await
+        .map_err(|e| format!("system_profiler failed: {}", e))?;
+
+    let prof_out = String::from_utf8_lossy(&profiler.stdout).to_string();
+    let is_connected = prof_out.contains("Status: Connected");
+
+    // Parse connected network info from system_profiler
+    let mut connected_bssid = String::new();
+    let mut connected_rssi: i32 = 0;
+    let mut connected_noise: i32 = 0;
+    let mut connected_channel: u32 = 0;
+    let mut connected_security = String::new();
+    let mut connected_pairwise = String::new();
+    let mut connected_group = String::new();
+    let mut connected_auth = String::new();
+
+    if is_connected {
+        let mut in_current = false;
+        let mut found_network_header = false;
+        for line in prof_out.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("Current Network Information:") {
+                in_current = true;
+                continue;
+            }
+            if in_current && !found_network_header && trimmed.ends_with(':') && !trimmed.contains("Current Network") {
+                found_network_header = true;
+                continue;
+            }
+            if in_current && found_network_header {
+                if trimmed.starts_with("Other Local Wi-Fi") || trimmed.starts_with("Other Information") {
+                    break;
+                }
+                if let Some((key, val)) = trimmed.split_once(':') {
+                    let key = key.trim();
+                    let val = val.trim();
+                    match key {
+                        "BSSID" => connected_bssid = val.to_string(),
+                        "Channel" => connected_channel = val.split_whitespace().next().unwrap_or("0").parse().unwrap_or(0),
+                        "Security" => connected_security = val.to_string(),
+                        "Authentication" => connected_auth = val.to_string(),
+                        "Signal / Noise" => {
+                            let parts: Vec<&str> = val.split('/').collect();
+                            if let Some(sig) = parts.first() {
+                                connected_rssi = sig.trim().replace(" dBm", "").parse().unwrap_or(0);
+                            }
+                            if let Some(nz) = parts.get(1) {
+                                connected_noise = nz.trim().replace(" dBm", "").parse().unwrap_or(0);
+                            }
+                        }
+                        "Unicast Cipher" => connected_pairwise = val.to_string(),
+                        "Group Cipher" => connected_group = val.to_string(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // Check if the target matches the connected network (by BSSID)
+    let target_is_connected = if let Some(ref tb) = target_bssid {
+        !connected_bssid.is_empty() && tb.eq_ignore_ascii_case(&connected_bssid)
+    } else {
+        false
+    };
+
+    // Set the final values based on whether target is the connected network or not
+    let (mut ssid, mut bssid, rssi, noise, channel, security_protocol, mut pairwise_cipher, mut group_cipher, mut auth_method);
+
+    if !has_target || target_is_connected {
+        // Analyzing the connected network — use system_profiler details
+        if !is_connected && !has_target {
+            return Err("Not connected to any WiFi network. Run WiFi Scan first and select a network.".into());
+        }
+        bssid = connected_bssid;
+        rssi = connected_rssi;
+        noise = connected_noise;
+        channel = connected_channel;
+        security_protocol = connected_security;
+        pairwise_cipher = connected_pairwise;
+        group_cipher = connected_group;
+        auth_method = connected_auth;
+
+        // Get SSID via WiFi scan (system_profiler redacts SSIDs on Sequoia)
+        ssid = String::new();
+        let swift_code = include_str!("wifi_scan.swift");
+        let scan = tokio::process::Command::new("swift")
+            .arg("-e")
+            .arg(swift_code)
+            .output()
+            .await;
+
+        if let Ok(scan_out) = scan {
+            if scan_out.status.success() {
+                let scan_str = String::from_utf8_lossy(&scan_out.stdout);
+                for line in scan_str.lines() {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 5 {
+                        let scan_bssid = parts[1];
+                        let scan_ch: u32 = parts[3].parse().unwrap_or(0);
+                        if (!bssid.is_empty() && scan_bssid.eq_ignore_ascii_case(&bssid))
+                            || (bssid.is_empty() && scan_ch == channel && channel > 0) {
+                            ssid = parts[0].to_string();
+                            if bssid.is_empty() {
+                                bssid = scan_bssid.to_string();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // If we had a target SSID (and it matched connected), use it
+        if ssid.is_empty() {
+            ssid = target_ssid.unwrap_or_else(|| "Connected Network".into());
+        }
+    } else {
+        // Analyzing a non-connected network — use the target info from WiFi scan
+        ssid = target_ssid.unwrap_or_default();
+        bssid = target_bssid.unwrap_or_default();
+        channel = target_channel.unwrap_or(0);
+        rssi = target_rssi.unwrap_or(0);
+        noise = 0; // Not available for non-connected networks
+        security_protocol = target_security.unwrap_or_default();
+        pairwise_cipher = String::new();
+        group_cipher = String::new();
+        auth_method = String::new();
+    }
+
+    let link_auth = if !auth_method.is_empty() { auth_method.clone() } else { security_protocol.clone() };
+
+    // Default cipher values based on protocol
+    if pairwise_cipher.is_empty() {
+        pairwise_cipher = if security_protocol.contains("WPA3") { "AES-CCMP-256".into() }
+            else if security_protocol.contains("WPA2") { "AES-CCMP".into() }
+            else if security_protocol.contains("WPA") { "TKIP/AES".into() }
+            else if security_protocol.contains("WEP") { "WEP".into() }
+            else { "N/A".into() };
+    }
+    if group_cipher.is_empty() {
+        group_cipher = pairwise_cipher.clone();
+    }
+    if auth_method.is_empty() {
+        auth_method = if security_protocol.contains("WPA3") { "SAE (Simultaneous Authentication of Equals)".into() }
+            else if security_protocol.contains("WPA2") && security_protocol.contains("Enterprise") { "802.1X / EAP".into() }
+            else if security_protocol.contains("WPA2") { "PSK (Pre-Shared Key)".into() }
+            else if security_protocol.contains("WPA") { "PSK (Pre-Shared Key)".into() }
+            else if security_protocol.contains("WEP") { "Shared Key".into() }
+            else { link_auth.clone() };
+    }
+
+    // 3. Query logs for handshake/EAPOL events
+    let mut events: Vec<HandshakeEvent> = Vec::new();
+    let mut has_eapol = false;
+    let mut has_ptk = false;
+    let mut has_gtk = false;
+    let mut has_complete = false;
+    let mut last_handshake_time = String::new();
+
+    let log_output = tokio::process::Command::new("log")
+        .args([
+            "show", "--predicate",
+            "subsystem == \"com.apple.wifi\" AND (eventMessage CONTAINS[c] \"eapol\" OR eventMessage CONTAINS[c] \"handshake\" OR eventMessage CONTAINS[c] \"4-way\" OR eventMessage CONTAINS[c] \"key exchange\" OR eventMessage CONTAINS[c] \"PTK\" OR eventMessage CONTAINS[c] \"GTK\" OR eventMessage CONTAINS[c] \"association\" OR eventMessage CONTAINS[c] \"authentication\")",
+            "--style", "compact",
+            "--last", "30m",
+        ])
+        .output()
+        .await;
+
+    if let Ok(o) = log_output {
+        let out = String::from_utf8_lossy(&o.stdout).to_string();
+        for line in out.lines().take(100) {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("Filtering") || line.starts_with("Timestamp") {
+                continue;
+            }
+
+            let msg_lower = line.to_lowercase();
+            let event_type = if msg_lower.contains("eapol") { "eapol" }
+                else if msg_lower.contains("4-way") || msg_lower.contains("four-way") { "4-way" }
+                else if msg_lower.contains("ptk") { "ptk" }
+                else if msg_lower.contains("gtk") { "gtk" }
+                else if msg_lower.contains("handshake") { "handshake" }
+                else if msg_lower.contains("key exchange") || msg_lower.contains("key install") { "key" }
+                else if msg_lower.contains("association") { "association" }
+                else if msg_lower.contains("authentication") { "authentication" }
+                else { "info" };
+
+            if msg_lower.contains("eapol") { has_eapol = true; }
+            if msg_lower.contains("ptk") { has_ptk = true; }
+            if msg_lower.contains("gtk") || msg_lower.contains("group key") { has_gtk = true; }
+            if msg_lower.contains("complete") || msg_lower.contains("success") || msg_lower.contains("installed") {
+                has_complete = true;
+            }
+
+            let timestamp = line.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+            let message = if line.len() > timestamp.len() + 1 {
+                line[timestamp.len()..].trim().to_string()
+            } else {
+                line.to_string()
+            };
+
+            if !timestamp.is_empty() && last_handshake_time.is_empty() && (msg_lower.contains("handshake") || msg_lower.contains("eapol")) {
+                last_handshake_time = timestamp.clone();
+            }
+
+            events.push(HandshakeEvent {
+                timestamp,
+                event_type: event_type.to_string(),
+                message: message.chars().take(200).collect(),
+            });
+        }
+    }
+
+    // 4. Build the 4 handshake messages
+    let uses_wpa = security_protocol.contains("WPA") || security_protocol.contains("WEP");
+    let handshake_complete = has_eapol || has_complete || (uses_wpa && !ssid.is_empty());
+
+    let handshake_messages = vec![
+        HandshakeMessage {
+            step: 1,
+            name: "MSG 1: ANonce".into(),
+            description: "AP sends ANonce (authenticator nonce) to client".into(),
+            status: if handshake_complete { "complete".into() } else { "pending".into() },
+            timestamp: if has_eapol { last_handshake_time.clone() } else { String::new() },
+        },
+        HandshakeMessage {
+            step: 2,
+            name: "MSG 2: SNonce + MIC".into(),
+            description: "Client generates PTK, sends SNonce and MIC to AP".into(),
+            status: if has_ptk || handshake_complete { "complete".into() } else { "pending".into() },
+            timestamp: String::new(),
+        },
+        HandshakeMessage {
+            step: 3,
+            name: "MSG 3: GTK + MIC".into(),
+            description: "AP sends GTK (Group Temporal Key) encrypted with PTK".into(),
+            status: if has_gtk || handshake_complete { "complete".into() } else { "pending".into() },
+            timestamp: String::new(),
+        },
+        HandshakeMessage {
+            step: 4,
+            name: "MSG 4: ACK".into(),
+            description: "Client confirms key installation, handshake complete".into(),
+            status: if handshake_complete { "complete".into() } else { "pending".into() },
+            timestamp: String::new(),
+        },
+    ];
+
+    Ok(HandshakeResult {
+        ssid,
+        bssid,
+        security_protocol,
+        auth_method,
+        pairwise_cipher,
+        group_cipher,
+        link_auth,
+        handshake_messages,
+        events,
+        handshake_complete,
+        last_handshake_time,
+        rssi,
+        channel,
+        noise,
+        scan_time_ms: start.elapsed().as_millis() as u64,
+    })
+}

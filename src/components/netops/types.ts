@@ -6,7 +6,9 @@ export type NetopsTool =
   | "ping" | "portscan" | "dns" | "whois" | "wifi" | "wifiauth"
   | "httpheaders" | "ssl" | "geoip" | "arp"
   | "subnet" | "reversedns" | "traceroute"
-  | "traffic" | "rogueap" | "logs" | "threatfeed" | "secscore" | "incidents";
+  | "traffic" | "rogueap" | "logs" | "threatfeed" | "secscore" | "incidents"
+  | "servicescan" | "subenum" | "dirbust" | "webfinger" | "wafdetect" | "webvuln" | "hashid" | "cipherscan"
+  | "handshake";
 
 // ═══ Result types (mirror Rust structs) ═══
 
@@ -274,6 +276,167 @@ export interface SecurityIncident {
   notes: IncidentNote[];
 }
 
+// ═══ Kali-style tool types ═══
+
+export interface ServiceEntry {
+  port: number;
+  service: string;
+  version: string;
+  banner: string;
+  status: string;
+}
+
+export interface ServiceScanResult {
+  host: string;
+  services: ServiceEntry[];
+  scan_time_ms: number;
+}
+
+export interface SubdomainEntry {
+  subdomain: string;
+  full_domain: string;
+  ips: string[];
+  cname: string;
+}
+
+export interface SubdomainEnumResult {
+  domain: string;
+  found: SubdomainEntry[];
+  tested_count: number;
+  found_count: number;
+  scan_time_ms: number;
+}
+
+export interface DirEntry {
+  path: string;
+  status_code: number;
+  content_length: number;
+  redirect_to: string;
+}
+
+export interface DirBustResult {
+  base_url: string;
+  entries: DirEntry[];
+  tested_count: number;
+  found_count: number;
+  scan_time_ms: number;
+}
+
+export interface TechMatch {
+  name: string;
+  category: string;
+  version: string;
+  evidence: string;
+}
+
+export interface WebFingerprintResult {
+  url: string;
+  technologies: TechMatch[];
+  server: string;
+  powered_by: string;
+  scan_time_ms: number;
+}
+
+export interface WafIndicator {
+  name: string;
+  confidence: string;
+  evidence: string;
+}
+
+export interface WafDetectResult {
+  url: string;
+  waf_detected: boolean;
+  waf_name: string;
+  indicators: WafIndicator[];
+  normal_status: number;
+  blocked_status: number;
+  scan_time_ms: number;
+}
+
+export interface VulnFinding {
+  title: string;
+  severity: string;
+  category: string;
+  detail: string;
+  url: string;
+  remediation: string;
+}
+
+export interface WebVulnResult {
+  target: string;
+  findings: VulnFinding[];
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  scan_time_ms: number;
+}
+
+export interface HashMatch {
+  hash_type: string;
+  confidence: string;
+  description: string;
+}
+
+export interface HashIdResult {
+  input: string;
+  length: number;
+  matches: HashMatch[];
+  is_base64: boolean;
+  query_time_ms: number;
+}
+
+export interface CipherInfo {
+  name: string;
+  protocol: string;
+  bits: number;
+  strength: string;
+}
+
+export interface CipherScanResult {
+  host: string;
+  supported_protocols: string[];
+  ciphers: CipherInfo[];
+  has_weak_ciphers: boolean;
+  grade: string;
+  preferred_cipher: string;
+  scan_time_ms: number;
+}
+
+// ═══ WPA Handshake types ═══
+
+export interface HandshakeMessage {
+  step: number;
+  name: string;
+  description: string;
+  status: string;
+  timestamp: string;
+}
+
+export interface HandshakeEvent {
+  timestamp: string;
+  event_type: string;
+  message: string;
+}
+
+export interface HandshakeResult {
+  ssid: string;
+  bssid: string;
+  security_protocol: string;
+  auth_method: string;
+  pairwise_cipher: string;
+  group_cipher: string;
+  link_auth: string;
+  handshake_messages: HandshakeMessage[];
+  events: HandshakeEvent[];
+  handshake_complete: boolean;
+  last_handshake_time: string;
+  rssi: number;
+  channel: number;
+  noise: number;
+  scan_time_ms: number;
+}
+
 // ═══ Discriminated union for results ═══
 
 export type ToolResult =
@@ -295,7 +458,16 @@ export type ToolResult =
   | { kind: "logs"; data: SystemLogsResult }
   | { kind: "threatfeed"; data: ThreatCheckResult }
   | { kind: "secscore"; data: SecurityScoreResult }
-  | { kind: "incidents"; data: SecurityIncident[] };
+  | { kind: "incidents"; data: SecurityIncident[] }
+  | { kind: "servicescan"; data: ServiceScanResult }
+  | { kind: "subenum"; data: SubdomainEnumResult }
+  | { kind: "dirbust"; data: DirBustResult }
+  | { kind: "webfinger"; data: WebFingerprintResult }
+  | { kind: "wafdetect"; data: WafDetectResult }
+  | { kind: "webvuln"; data: WebVulnResult }
+  | { kind: "hashid"; data: HashIdResult }
+  | { kind: "cipherscan"; data: CipherScanResult }
+  | { kind: "handshake"; data: HandshakeResult };
 
 export interface HistoryEntry {
   tool: NetopsTool;
