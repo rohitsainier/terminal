@@ -6,14 +6,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
+use tokio::sync::Mutex as TokioMutex;
 
 use iroh::{
     discovery::mdns::MdnsDiscovery,
-    endpoint::Incoming,
-    protocol::Router,
-    Endpoint, PublicKey, RelayMode, SecretKey,
+    endpoint::Connection,
+    protocol::{AcceptError, ProtocolHandler, Router},
+    Endpoint, PublicKey, SecretKey,
 };
 use iroh_blobs::{store::fs::FsStore, BlobsProtocol};
 
@@ -125,29 +127,261 @@ struct TransferState {
     start_time: Instant,
 }
 
+// ═══ Shared state for protocol handlers ═════════════════════════════════
+
+/// Shared state accessible by protocol handlers (which run outside the manager's mutex)
+#[derive(Debug, Clone)]
+struct SharedState {
+    app_handle: tauri::AppHandle,
+    trusted_peers: Arc<TokioMutex<HashMap<String, String>>>,
+    transfer_history: Arc<TokioMutex<Vec<TransferHistoryEntry>>>,
+    pending_requests: Arc<TokioMutex<HashMap<String, TransferRequest>>>,
+    download_dir: Arc<TokioMutex<String>>,
+    config_dir: PathBuf,
+}
+
+impl SharedState {
+    fn io_err(msg: impl Into<String>) -> AcceptError {
+        AcceptError::from_err(std::io::Error::new(std::io::ErrorKind::Other, msg.into()))
+    }
+
+    /// Persist history to disk
+    async fn save_history(&self) {
+        let history = self.transfer_history.lock().await;
+        let recent: Vec<_> = history.iter().rev().take(MAX_HISTORY).rev().cloned().collect();
+        if let Ok(data) = serde_json::to_string_pretty(&recent) {
+            let _ = std::fs::create_dir_all(&self.config_dir);
+            let _ = std::fs::write(self.config_dir.join("transfer_history.json"), data);
+        }
+    }
+}
+
+// ═══ Protocol Handlers (registered with Router) ══════════════════════════
+
+/// Handles incoming META ALPN connections (file transfer requests)
+#[derive(Debug, Clone)]
+struct MetaProtocolHandler {
+    shared: SharedState,
+}
+
+impl ProtocolHandler for MetaProtocolHandler {
+    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
+        let (_send, mut recv) = conn
+            .accept_bi()
+            .await
+            .map_err(|e| SharedState::io_err(format!("Stream error: {}", e)))?;
+
+        let mut buf = vec![0u8; 64 * 1024];
+        let n = recv
+            .read(&mut buf)
+            .await
+            .map_err(|e| SharedState::io_err(format!("Read error: {:?}", e)))?;
+
+        if let Some(n) = n {
+            let msg: TransferRequest = serde_json::from_slice(&buf[..n])
+                .map_err(|e| SharedState::io_err(format!("Parse error: {}", e)))?;
+
+            // Store pending request so accept_transfer can find it
+            {
+                let mut pending = self.shared.pending_requests.lock().await;
+                pending.insert(msg.id.clone(), msg.clone());
+            }
+
+            let _ = self.shared.app_handle.emit("bharatlink-incoming-request", &msg);
+        }
+
+        Ok(())
+    }
+}
+
+/// Handles incoming TEXT ALPN connections (direct text sharing)
+#[derive(Debug, Clone)]
+struct TextProtocolHandler {
+    shared: SharedState,
+}
+
+impl ProtocolHandler for TextProtocolHandler {
+    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
+        let remote_id = conn.remote_id();
+        let remote_str = remote_id.to_string();
+
+        let mut recv = conn
+            .accept_uni()
+            .await
+            .map_err(|e| SharedState::io_err(format!("Stream error: {}", e)))?;
+
+        let mut data = Vec::new();
+        let mut buf = vec![0u8; 4096];
+        loop {
+            match recv.read(&mut buf).await {
+                Ok(Some(n)) => {
+                    data.extend_from_slice(&buf[..n]);
+                    if data.len() > MAX_TEXT_SIZE {
+                        return Err(SharedState::io_err("Text too large"));
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    return Err(SharedState::io_err(format!("Read error: {:?}", e)));
+                }
+            }
+        }
+
+        let text = String::from_utf8_lossy(&data).to_string();
+        let trusted = self.shared.trusted_peers.lock().await;
+        let nickname = trusted.get(&remote_str).cloned();
+        drop(trusted);
+
+        let text_preview = if text.len() > 200 {
+            format!("{}...", &text[..200])
+        } else {
+            text.clone()
+        };
+
+        let entry = TransferHistoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            direction: "receive".to_string(),
+            peer_id: remote_str,
+            peer_nickname: nickname,
+            transfer_type: "text".to_string(),
+            filename: None,
+            file_size: Some(data.len() as u64),
+            text_content: Some(text_preview),
+            status: "complete".to_string(),
+            timestamp: epoch_ms(),
+            duration_ms: Some(0),
+            save_path: None,
+        };
+
+        // Persist to shared history
+        {
+            let mut history = self.shared.transfer_history.lock().await;
+            history.push(entry.clone());
+        }
+        self.shared.save_history().await;
+
+        // Emit to frontend
+        let _ = self.shared.app_handle.emit("bharatlink-transfer-complete", &entry);
+
+        Ok(())
+    }
+}
+
+/// Handles incoming file downloads via iroh-blobs (triggered after META request accepted)
+#[derive(Debug, Clone)]
+struct FileReceiveHandler {
+    shared: SharedState,
+    store: FsStore,
+    endpoint: Endpoint,
+}
+
+impl FileReceiveHandler {
+    /// Download a blob from a remote peer and save to disk
+    async fn download_blob(
+        &self,
+        hash_str: &str,
+        filename: &str,
+        from_peer: &str,
+        from_nickname: Option<String>,
+        request_id: &str,
+    ) -> Result<(), String> {
+        let download_dir = self.shared.download_dir.lock().await.clone();
+        let save_dir = PathBuf::from(&download_dir);
+        std::fs::create_dir_all(&save_dir)
+            .map_err(|e| format!("Cannot create download dir: {}", e))?;
+
+        let save_path = save_dir.join(filename);
+
+        // Parse the blob hash
+        let hash: iroh_blobs::Hash = hash_str
+            .parse()
+            .map_err(|e| format!("Invalid blob hash: {}", e))?;
+
+        // Parse sender's public key and connect via blobs ALPN
+        let sender_key: PublicKey = from_peer
+            .parse()
+            .map_err(|e| format!("Invalid sender ID: {}", e))?;
+
+        // Connect to the sender's blob protocol endpoint
+        let conn = self.endpoint
+            .connect(sender_key, iroh_blobs::ALPN)
+            .await
+            .map_err(|e| format!("Failed to connect for file download: {}", e))?;
+
+        // Fetch the blob using the remote API
+        let hash_and_format = iroh_blobs::HashAndFormat::raw(hash);
+        self.store
+            .remote()
+            .fetch(conn, hash_and_format)
+            .complete()
+            .await
+            .map_err(|e| format!("Download failed: {}", e))?;
+
+        // Read the downloaded blob and write to file
+        use tokio::io::AsyncReadExt;
+        let mut reader = self.store.blobs().reader(hash);
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|e| format!("Read blob error: {}", e))?;
+
+        std::fs::write(&save_path, &bytes)
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+
+        let entry = TransferHistoryEntry {
+            id: request_id.to_string(),
+            direction: "receive".to_string(),
+            peer_id: from_peer.to_string(),
+            peer_nickname: from_nickname,
+            transfer_type: "file".to_string(),
+            filename: Some(filename.to_string()),
+            file_size: Some(bytes.len() as u64),
+            text_content: None,
+            status: "complete".to_string(),
+            timestamp: epoch_ms(),
+            duration_ms: None,
+            save_path: Some(save_path.to_string_lossy().to_string()),
+        };
+
+        // Persist to shared history
+        {
+            let mut history = self.shared.transfer_history.lock().await;
+            history.push(entry.clone());
+        }
+        self.shared.save_history().await;
+
+        // Emit to frontend
+        let _ = self.shared.app_handle.emit("bharatlink-transfer-complete", &entry);
+
+        Ok(())
+    }
+}
+
 // ═══ BharatLinkManager ══════════════════════════════════════════════════
 
 pub struct BharatLinkManager {
     // iroh components
     endpoint: Option<Endpoint>,
     router: Option<Router>,
-    #[allow(dead_code)]
     store: Option<FsStore>,
 
     // peer tracking
     peers: HashMap<String, PeerInfo>,
-    trusted_peers: HashMap<String, String>, // node_id → nickname
+    trusted_peers_shared: Arc<TokioMutex<HashMap<String, String>>>,
 
-    // transfer tracking
+    // transfer tracking (shared with protocol handlers)
     active_transfers: HashMap<String, TransferState>,
-    transfer_history: Vec<TransferHistoryEntry>,
-    #[allow(dead_code)]
-    pending_requests: HashMap<String, TransferRequest>,
-    #[allow(dead_code)]
+    transfer_history_shared: Arc<TokioMutex<Vec<TransferHistoryEntry>>>,
+    pending_requests_shared: Arc<TokioMutex<HashMap<String, TransferRequest>>>,
     accepted_transfers: std::collections::HashSet<String>,
+
+    // file receive handler (for accepting incoming file transfers)
+    file_receiver: Option<FileReceiveHandler>,
 
     // config
     settings: BharatLinkSettings,
+    download_dir_shared: Arc<TokioMutex<String>>,
     config_dir: PathBuf,
     data_dir: PathBuf,
 
@@ -169,12 +403,14 @@ impl BharatLinkManager {
             router: None,
             store: None,
             peers: HashMap::new(),
-            trusted_peers: HashMap::new(),
+            trusted_peers_shared: Arc::new(TokioMutex::new(HashMap::new())),
             active_transfers: HashMap::new(),
-            transfer_history: Vec::new(),
-            pending_requests: HashMap::new(),
+            transfer_history_shared: Arc::new(TokioMutex::new(Vec::new())),
+            pending_requests_shared: Arc::new(TokioMutex::new(HashMap::new())),
             accepted_transfers: std::collections::HashSet::new(),
+            file_receiver: None,
             settings: BharatLinkSettings::default(),
+            download_dir_shared: Arc::new(TokioMutex::new(String::new())),
             config_dir: bl_config_dir,
             data_dir,
             app_handle: None,
@@ -195,17 +431,20 @@ impl BharatLinkManager {
 
         let peers_path = self.config_dir.join("trusted_peers.json");
         if let Ok(data) = std::fs::read_to_string(&peers_path) {
-            if let Ok(p) = serde_json::from_str(&data) {
-                self.trusted_peers = p;
+            if let Ok(p) = serde_json::from_str::<HashMap<String, String>>(&data) {
+                self.trusted_peers_shared = Arc::new(TokioMutex::new(p));
             }
         }
 
         let history_path = self.config_dir.join("transfer_history.json");
         if let Ok(data) = std::fs::read_to_string(&history_path) {
-            if let Ok(h) = serde_json::from_str(&data) {
-                self.transfer_history = h;
+            if let Ok(h) = serde_json::from_str::<Vec<TransferHistoryEntry>>(&data) {
+                self.transfer_history_shared = Arc::new(TokioMutex::new(h));
             }
         }
+
+        // Initialize shared download dir
+        self.download_dir_shared = Arc::new(TokioMutex::new(self.settings.download_dir.clone()));
     }
 
     fn save_state(&self) -> Result<(), String> {
@@ -217,19 +456,20 @@ impl BharatLinkManager {
         std::fs::write(self.config_dir.join("settings.json"), data)
             .map_err(|e| format!("Failed to save settings: {}", e))?;
 
-        let data =
-            serde_json::to_string_pretty(&self.trusted_peers).map_err(|e| format!("{}", e))?;
-        std::fs::write(self.config_dir.join("trusted_peers.json"), data)
-            .map_err(|e| format!("Failed to save trusted peers: {}", e))?;
+        // Save trusted peers from shared state — use try_lock to avoid async in sync context
+        if let Ok(trusted) = self.trusted_peers_shared.try_lock() {
+            let data =
+                serde_json::to_string_pretty(&*trusted).map_err(|e| format!("{}", e))?;
+            std::fs::write(self.config_dir.join("trusted_peers.json"), data)
+                .map_err(|e| format!("Failed to save trusted peers: {}", e))?;
+        }
 
-        let history: Vec<_> = self
-            .transfer_history
-            .iter()
-            .rev()
-            .take(MAX_HISTORY)
-            .rev()
-            .cloned()
-            .collect();
+        // Save history from shared state
+        let history: Vec<_> = if let Ok(h) = self.transfer_history_shared.try_lock() {
+            h.iter().rev().take(MAX_HISTORY).rev().cloned().collect()
+        } else {
+            Vec::new()
+        };
         let data = serde_json::to_string_pretty(&history).map_err(|e| format!("{}", e))?;
         std::fs::write(self.config_dir.join("transfer_history.json"), data)
             .map_err(|e| format!("Failed to save history: {}", e))?;
@@ -255,8 +495,7 @@ impl BharatLinkManager {
         }
 
         let key = SecretKey::generate(&mut rand::rng());
-        let bytes = key.to_bytes();
-        std::fs::write(&key_path, bytes)
+        std::fs::write(&key_path, key.to_bytes())
             .map_err(|e| format!("Failed to save secret key: {}", e))?;
 
         #[cfg(unix)]
@@ -287,8 +526,11 @@ impl BharatLinkManager {
             .await
             .map_err(|e| format!("Failed to create blob store: {}", e))?;
 
-        // Build endpoint with mDNS discovery
-        let endpoint = Endpoint::empty_builder(RelayMode::Default)
+        // Build endpoint with full discovery stack:
+        //   - N0 preset: PkarrPublisher (publishes to dns.iroh.link) + DnsDiscovery (resolves via DNS)
+        //   - Relay servers for NAT traversal
+        //   - mDNS for local network discovery (added after bind)
+        let endpoint = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(vec![
                 BHARATLINK_META_ALPN.to_vec(),
@@ -298,139 +540,131 @@ impl BharatLinkManager {
             .await
             .map_err(|e| format!("Failed to bind endpoint: {}", e))?;
 
-        // Register mDNS discovery
+        // Add mDNS discovery for local network (on top of DNS/pkarr for remote)
         let mdns = MdnsDiscovery::builder()
             .build(endpoint.id())
             .map_err(|e| format!("Failed to start mDNS: {}", e))?;
         endpoint.discovery().add(mdns);
 
-        // Set up blob protocol handler
-        let blobs = BlobsProtocol::new(&store, None);
+        // Update shared download dir
+        *self.download_dir_shared.lock().await = self.settings.download_dir.clone();
 
-        // Build router for blobs protocol
+        // Create shared state for protocol handlers
+        let shared = SharedState {
+            app_handle: app_handle.clone(),
+            trusted_peers: self.trusted_peers_shared.clone(),
+            transfer_history: self.transfer_history_shared.clone(),
+            pending_requests: self.pending_requests_shared.clone(),
+            download_dir: self.download_dir_shared.clone(),
+            config_dir: self.config_dir.clone(),
+        };
+
+        // Create protocol handlers
+        let blobs = BlobsProtocol::new(&store, None);
+        let meta_handler = MetaProtocolHandler {
+            shared: shared.clone(),
+        };
+        let text_handler = TextProtocolHandler {
+            shared: shared.clone(),
+        };
+
+        // Store file receive handler for accepting incoming transfers
+        self.file_receiver = Some(FileReceiveHandler {
+            shared,
+            store: store.clone(),
+            endpoint: endpoint.clone(),
+        });
+
+        // Build router with ALL protocols — blobs + meta + text
         let router = Router::builder(endpoint.clone())
             .accept(iroh_blobs::ALPN, blobs)
+            .accept(BHARATLINK_META_ALPN, meta_handler)
+            .accept(BHARATLINK_TEXT_ALPN, text_handler)
             .spawn();
 
-        self.endpoint = Some(endpoint.clone());
+        // Spawn peer discovery polling loop
+        let ep_for_discovery = endpoint.clone();
+        let app_for_discovery = app_handle.clone();
+        let trusted_for_discovery = self.trusted_peers_shared.clone();
+        tokio::spawn(async move {
+            Self::peer_discovery_loop(ep_for_discovery, app_for_discovery, trusted_for_discovery).await;
+        });
+
+        self.endpoint = Some(endpoint);
         self.router = Some(router);
         self.store = Some(store);
-
-        // Spawn accept loop for custom protocols (meta + text)
-        let ep_clone = endpoint.clone();
-        let handle_clone = app_handle;
-        let trusted = self.trusted_peers.clone();
-
-        tokio::spawn(async move {
-            Self::accept_loop(ep_clone, handle_clone, trusted).await;
-        });
 
         self.get_node_info()
     }
 
-    async fn accept_loop(
+    /// Periodically polls the endpoint for discovered remote nodes and emits events
+    async fn peer_discovery_loop(
         endpoint: Endpoint,
         app_handle: tauri::AppHandle,
-        trusted_peers: HashMap<String, String>,
+        trusted_peers: Arc<TokioMutex<HashMap<String, String>>>,
     ) {
+        let mut known_peers: HashMap<String, u64> = HashMap::new();
+
         loop {
-            let incoming = match endpoint.accept().await {
-                Some(incoming) => incoming,
-                None => break,
-            };
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-            let handle = app_handle.clone();
-            let trusted = trusted_peers.clone();
-
-            tokio::spawn(async move {
-                if let Err(e) = Self::handle_incoming(incoming, handle, trusted).await {
-                    eprintln!("[BharatLink] Accept error: {}", e);
-                }
-            });
-        }
-    }
-
-    async fn handle_incoming(
-        incoming: Incoming,
-        app_handle: tauri::AppHandle,
-        trusted_peers: HashMap<String, String>,
-    ) -> Result<(), String> {
-        let mut connecting = incoming
-            .accept()
-            .map_err(|e| format!("Accept error: {}", e))?;
-
-        let alpn = connecting
-            .alpn()
-            .await
-            .map_err(|e| format!("ALPN error: {}", e))?;
-
-        let conn = connecting
-            .await
-            .map_err(|e| format!("Connection error: {}", e))?;
-
-        let remote_id = conn.remote_id();
-        let remote_str = remote_id.to_string();
-
-        if alpn == BHARATLINK_META_ALPN {
-            let (_send, mut recv) = conn
-                .accept_bi()
-                .await
-                .map_err(|e| format!("Stream error: {}", e))?;
-
-            let mut buf = vec![0u8; 64 * 1024];
-            let n = recv
-                .read(&mut buf)
-                .await
-                .map_err(|e| format!("Read error: {:?}", e))?;
-            if let Some(n) = n {
-                let msg: TransferRequest = serde_json::from_slice(&buf[..n])
-                    .map_err(|e| format!("Parse error: {}", e))?;
-
-                let _ = app_handle.emit("bharatlink-incoming-request", &msg);
-            }
-        } else if alpn == BHARATLINK_TEXT_ALPN {
-            let mut recv = conn
-                .accept_uni()
-                .await
-                .map_err(|e| format!("Stream error: {}", e))?;
-
-            let mut data = Vec::new();
-            let mut buf = vec![0u8; 4096];
-            loop {
-                match recv.read(&mut buf).await {
-                    Ok(Some(n)) => {
-                        data.extend_from_slice(&buf[..n]);
-                        if data.len() > MAX_TEXT_SIZE {
-                            return Err("Text too large".to_string());
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(e) => return Err(format!("Read error: {:?}", e)),
-                }
+            // Check if endpoint is still alive
+            if endpoint.is_closed() {
+                break;
             }
 
-            let text = String::from_utf8_lossy(&data).to_string();
-            let nickname = trusted_peers.get(&remote_str).cloned();
+            // Get our own endpoint addr to populate node info
+            let our_addr = endpoint.addr();
+            let our_id = endpoint.id().to_string();
 
-            let entry = TransferHistoryEntry {
-                id: uuid::Uuid::new_v4().to_string(),
-                direction: "receive".to_string(),
-                peer_id: remote_str,
-                peer_nickname: nickname,
-                transfer_type: "text".to_string(),
-                filename: None,
-                file_size: Some(data.len() as u64),
-                text_content: Some(text),
-                status: "complete".to_string(),
-                timestamp: epoch_ms(),
-                duration_ms: Some(0),
-                save_path: None,
+            // Check remote nodes via endpoint's remote info
+            // The mDNS discovery automatically populates the endpoint's address book
+            // We detect peers by checking endpoint connectivity
+            let trusted = trusted_peers.lock().await;
+            let trusted_clone = trusted.clone();
+            drop(trusted);
+
+            // Emit node status with relay info
+            let relay_url = our_addr.relay_urls().next().map(|u| u.to_string());
+            let local_addrs: Vec<String> = our_addr.ip_addrs().map(|a| a.to_string()).collect();
+
+            let status = NodeInfo {
+                node_id: our_id.clone(),
+                node_id_short: if our_id.len() >= 8 {
+                    our_id[..8].to_string()
+                } else {
+                    our_id.clone()
+                },
+                is_running: true,
+                relay_url,
+                local_addrs,
+                discovered_peers: known_peers.len(),
             };
+            let _ = app_handle.emit("bharatlink-node-status", &status);
 
-            let _ = app_handle.emit("bharatlink-transfer-complete", &entry);
+            // For trusted peers, try to check if they're reachable
+            for (peer_id, nickname) in &trusted_clone {
+                if peer_id == &our_id {
+                    continue;
+                }
+
+                let now = epoch_ms();
+                let is_known = known_peers.contains_key(peer_id);
+
+                if !is_known {
+                    known_peers.insert(peer_id.clone(), now);
+                    let peer_info = PeerInfo {
+                        node_id: peer_id.clone(),
+                        nickname: Some(nickname.clone()),
+                        is_local: false,
+                        last_seen: now,
+                        is_connected: false,
+                        is_trusted: true,
+                    };
+                    let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
+                }
+            }
         }
-
-        Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<(), String> {
@@ -458,12 +692,16 @@ impl BharatLinkManager {
                     node_id.clone()
                 };
 
+                let addr = ep.addr();
+                let relay_url = addr.relay_urls().next().map(|u| u.to_string());
+                let local_addrs: Vec<String> = addr.ip_addrs().map(|a| a.to_string()).collect();
+
                 Ok(NodeInfo {
                     node_id,
                     node_id_short,
                     is_running: true,
-                    relay_url: None,
-                    local_addrs: Vec::new(),
+                    relay_url,
+                    local_addrs,
                     discovered_peers: self.peers.len(),
                 })
             }
@@ -483,16 +721,19 @@ impl BharatLinkManager {
     pub fn get_peers(&self) -> Vec<PeerInfo> {
         let mut result: Vec<PeerInfo> = self.peers.values().cloned().collect();
 
-        for (id, nickname) in &self.trusted_peers {
-            if !self.peers.contains_key(id) {
-                result.push(PeerInfo {
-                    node_id: id.clone(),
-                    nickname: Some(nickname.clone()),
-                    is_local: false,
-                    last_seen: 0,
-                    is_connected: false,
-                    is_trusted: true,
-                });
+        // Also include trusted peers not yet discovered
+        if let Ok(trusted) = self.trusted_peers_shared.try_lock() {
+            for (id, nickname) in trusted.iter() {
+                if !self.peers.contains_key(id) {
+                    result.push(PeerInfo {
+                        node_id: id.clone(),
+                        nickname: Some(nickname.clone()),
+                        is_local: false,
+                        last_seen: 0,
+                        is_connected: false,
+                        is_trusted: true,
+                    });
+                }
             }
         }
 
@@ -508,22 +749,37 @@ impl BharatLinkManager {
             return Err("Invalid node ID: too short".to_string());
         }
 
-        let is_trusted = self.trusted_peers.contains_key(&node_id);
+        let is_trusted = self.trusted_peers_shared.try_lock()
+            .map(|t| t.contains_key(&node_id))
+            .unwrap_or(false);
+
         let peer = PeerInfo {
             node_id: node_id.clone(),
-            nickname: nickname.or_else(|| self.trusted_peers.get(&node_id).cloned()),
+            nickname: nickname.clone(),
             is_local: false,
             last_seen: epoch_ms(),
             is_connected: false,
             is_trusted,
         };
 
-        self.peers.insert(node_id, peer.clone());
+        self.peers.insert(node_id.clone(), peer.clone());
+
+        // Also add to trusted peers if a nickname is provided
+        if let Some(name) = nickname {
+            if let Ok(mut trusted) = self.trusted_peers_shared.try_lock() {
+                trusted.insert(node_id, name);
+            }
+            let _ = self.save_state();
+        }
+
         Ok(peer)
     }
 
-    pub fn trust_peer(&mut self, node_id: String, nickname: String) -> Result<(), String> {
-        self.trusted_peers.insert(node_id.clone(), nickname.clone());
+    pub async fn trust_peer(&mut self, node_id: String, nickname: String) -> Result<(), String> {
+        {
+            let mut trusted = self.trusted_peers_shared.lock().await;
+            trusted.insert(node_id.clone(), nickname.clone());
+        }
 
         if let Some(peer) = self.peers.get_mut(&node_id) {
             peer.is_trusted = true;
@@ -533,8 +789,11 @@ impl BharatLinkManager {
         self.save_state()
     }
 
-    pub fn untrust_peer(&mut self, node_id: String) -> Result<(), String> {
-        self.trusted_peers.remove(&node_id);
+    pub async fn untrust_peer(&mut self, node_id: String) -> Result<(), String> {
+        {
+            let mut trusted = self.trusted_peers_shared.lock().await;
+            trusted.remove(&node_id);
+        }
 
         if let Some(peer) = self.peers.get_mut(&node_id) {
             peer.is_trusted = false;
@@ -611,11 +870,11 @@ impl BharatLinkManager {
             .parse()
             .map_err(|e| format!("Invalid peer ID: {}", e))?;
 
-        // Send transfer request via META ALPN
+        // Connect using EndpointAddr — iroh will use mDNS/relay to resolve
         let conn = endpoint
             .connect(peer_key, BHARATLINK_META_ALPN)
             .await
-            .map_err(|e| format!("Failed to connect to peer: {}", e))?;
+            .map_err(|e| format!("Failed to connect to peer: {}. Make sure the peer is online and both devices are on the same network, or try adding the peer's full endpoint address.", e))?;
 
         let request = TransferRequest {
             id: transfer_id.clone(),
@@ -643,40 +902,29 @@ impl BharatLinkManager {
         send.finish()
             .map_err(|e| format!("Finish error: {}", e))?;
 
-        // Emit completion
-        if let Some(ref handle) = app_handle {
-            let _ = handle.emit(
-                "bharatlink-transfer-progress",
-                &TransferProgress {
-                    transfer_id: transfer_id.clone(),
-                    direction: "send".to_string(),
-                    filename: file_name.clone(),
-                    bytes_transferred: file_size,
-                    total_bytes: file_size,
-                    percent: 100.0,
-                    speed_bps: 0,
-                    status: "complete".to_string(),
-                    error: None,
-                },
-            );
-        }
+        // Record in history
+        let nickname = {
+            let trusted = self.trusted_peers_shared.lock().await;
+            trusted.get(&peer_id).cloned()
+        };
 
-        let nickname = self.trusted_peers.get(&peer_id).cloned();
         let entry = TransferHistoryEntry {
             id: transfer_id.clone(),
             direction: "send".to_string(),
             peer_id: peer_id.clone(),
             peer_nickname: nickname,
             transfer_type: "file".to_string(),
-            filename: Some(file_name),
+            filename: Some(file_name.clone()),
             file_size: Some(file_size),
             text_content: None,
             status: "complete".to_string(),
             timestamp: epoch_ms(),
             duration_ms: None,
-            save_path: Some(file_path),
+            save_path: None,
         };
-        self.transfer_history.push(entry.clone());
+        if let Ok(mut h) = self.transfer_history_shared.try_lock() {
+            h.push(entry.clone());
+        }
         let _ = self.save_state();
 
         if let Some(ref handle) = app_handle {
@@ -685,8 +933,6 @@ impl BharatLinkManager {
 
         Ok(transfer_id)
     }
-
-    // ── Text transfer ───────────────────────────────────────────────────
 
     pub async fn send_text(
         &mut self,
@@ -709,7 +955,7 @@ impl BharatLinkManager {
         let conn = endpoint
             .connect(peer_key, BHARATLINK_TEXT_ALPN)
             .await
-            .map_err(|e| format!("Failed to connect to peer: {}", e))?;
+            .map_err(|e| format!("Failed to connect to peer: {}. Make sure the peer is online and both devices are on the same network.", e))?;
 
         let mut send = conn
             .open_uni()
@@ -723,7 +969,14 @@ impl BharatLinkManager {
         send.finish()
             .map_err(|e| format!("Finish error: {}", e))?;
 
-        conn.close(0u8.into(), b"done");
+        // Give the receiver time to read the data before dropping the connection.
+        // finish() signals EOF but dropping conn immediately can close the QUIC
+        // connection before all data is flushed. A small delay ensures delivery.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Drop connection gracefully (QUIC will flush remaining data)
+        drop(send);
+        drop(conn);
 
         let text_preview = if text.len() > 100 {
             format!("{}...", &text[..100])
@@ -731,7 +984,11 @@ impl BharatLinkManager {
             text.clone()
         };
 
-        let nickname = self.trusted_peers.get(&peer_id).cloned();
+        let nickname = {
+            let trusted = self.trusted_peers_shared.lock().await;
+            trusted.get(&peer_id).cloned()
+        };
+
         let entry = TransferHistoryEntry {
             id: transfer_id.clone(),
             direction: "send".to_string(),
@@ -746,7 +1003,9 @@ impl BharatLinkManager {
             duration_ms: None,
             save_path: None,
         };
-        self.transfer_history.push(entry.clone());
+        if let Ok(mut h) = self.transfer_history_shared.try_lock() {
+            h.push(entry.clone());
+        }
         let _ = self.save_state();
 
         if let Some(ref handle) = app_handle {
@@ -758,14 +1017,48 @@ impl BharatLinkManager {
 
     // ── Transfer management ─────────────────────────────────────────────
 
-    pub fn accept_transfer(&mut self, request_id: String) -> Result<(), String> {
+    pub async fn accept_transfer(&mut self, request_id: String) -> Result<(), String> {
+        let request = {
+            let mut pending = self.pending_requests_shared.lock().await;
+            pending.remove(&request_id)
+        };
         self.accepted_transfers.insert(request_id.clone());
-        self.pending_requests.remove(&request_id);
+
+        // If it's a file transfer, trigger the download
+        if let Some(req) = request {
+            if req.transfer_type == "file" {
+                if let (Some(hash), Some(filename)) = (&req.blob_hash, &req.filename) {
+                    if let Some(ref receiver) = self.file_receiver {
+                        let receiver = receiver.clone();
+                        let hash = hash.clone();
+                        let filename = filename.clone();
+                        let from_peer = req.from_peer.clone();
+                        let from_nickname = req.from_nickname.clone();
+                        let request_id = req.id.clone();
+
+                        // Spawn download in background
+                        tokio::spawn(async move {
+                            if let Err(e) = receiver.download_blob(
+                                &hash,
+                                &filename,
+                                &from_peer,
+                                from_nickname,
+                                &request_id,
+                            ).await {
+                                eprintln!("[BharatLink] File download failed: {}", e);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
-    pub fn reject_transfer(&mut self, request_id: String) -> Result<(), String> {
-        self.pending_requests.remove(&request_id);
+    pub async fn reject_transfer(&mut self, request_id: String) -> Result<(), String> {
+        let mut pending = self.pending_requests_shared.lock().await;
+        pending.remove(&request_id);
         Ok(())
     }
 
@@ -779,11 +1072,15 @@ impl BharatLinkManager {
     // ── History ─────────────────────────────────────────────────────────
 
     pub fn get_history(&self) -> Vec<TransferHistoryEntry> {
-        self.transfer_history.clone()
+        self.transfer_history_shared.try_lock()
+            .map(|h| h.clone())
+            .unwrap_or_default()
     }
 
     pub fn clear_history(&mut self) -> Result<(), String> {
-        self.transfer_history.clear();
+        if let Ok(mut h) = self.transfer_history_shared.try_lock() {
+            h.clear();
+        }
         self.save_state()
     }
 
@@ -860,7 +1157,7 @@ pub async fn bharatlink_trust_peer(
     nickname: String,
 ) -> Result<(), String> {
     let mut mgr = state.bharatlink_manager.lock().await;
-    mgr.trust_peer(node_id, nickname)
+    mgr.trust_peer(node_id, nickname).await
 }
 
 #[tauri::command]
@@ -869,7 +1166,7 @@ pub async fn bharatlink_untrust_peer(
     node_id: String,
 ) -> Result<(), String> {
     let mut mgr = state.bharatlink_manager.lock().await;
-    mgr.untrust_peer(node_id)
+    mgr.untrust_peer(node_id).await
 }
 
 #[tauri::command]
@@ -898,7 +1195,7 @@ pub async fn bharatlink_accept_transfer(
     request_id: String,
 ) -> Result<(), String> {
     let mut mgr = state.bharatlink_manager.lock().await;
-    mgr.accept_transfer(request_id)
+    mgr.accept_transfer(request_id).await
 }
 
 #[tauri::command]
@@ -907,7 +1204,7 @@ pub async fn bharatlink_reject_transfer(
     request_id: String,
 ) -> Result<(), String> {
     let mut mgr = state.bharatlink_manager.lock().await;
-    mgr.reject_transfer(request_id)
+    mgr.reject_transfer(request_id).await
 }
 
 #[tauri::command]

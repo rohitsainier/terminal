@@ -53,7 +53,7 @@ export default function TransferPanel(props: Props) {
   };
 
   const formatTime = (ts: number) => {
-    const d = new Date(ts * 1000);
+    const d = new Date(ts);
     return d.toLocaleTimeString();
   };
 
@@ -215,10 +215,20 @@ export default function TransferPanel(props: Props) {
                     {formatTime(entry.timestamp)} ·{" "}
                     {entry.status}
                   </span>
+                  <Show when={entry.transfer_type === "text" && entry.text_content}>
+                    <span class="blnk-history-text-preview">
+                      {entry.text_content}
+                    </span>
+                  </Show>
+                  <Show when={entry.save_path}>
+                    <span class="blnk-history-save-path" title={entry.save_path || ""}>
+                      Saved: {entry.save_path?.split("/").pop() || entry.save_path}
+                    </span>
+                  </Show>
                 </div>
                 <Show when={entry.file_size}>
                   <span class="blnk-history-size">
-                    {formatBytes(entry.file_size)}
+                    {formatBytes(entry.file_size!)}
                   </span>
                 </Show>
               </div>

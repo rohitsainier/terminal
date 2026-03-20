@@ -26,7 +26,8 @@ export default function PeerPanel(props: Props) {
 
   const formatLastSeen = (ts: number | null) => {
     if (!ts) return "never";
-    const diff = Math.floor(Date.now() / 1000 - ts);
+    const diff = Math.floor((Date.now() - ts) / 1000);
+    if (diff < 0) return "just now";
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     return `${Math.floor(diff / 3600)}h ago`;

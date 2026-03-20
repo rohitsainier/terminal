@@ -630,6 +630,28 @@
   flex-shrink: 0;
 }
 
+.blnk-history-text-preview {
+  display: block;
+  font-size: 9px;
+  color: var(--accent);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.blnk-history-save-path {
+  display: block;
+  font-size: 8px;
+  opacity: 0.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+  cursor: help;
+}
+
 /* ─── Info panel ─── */
 .blnk-info-section {
   padding: 8px 0;
