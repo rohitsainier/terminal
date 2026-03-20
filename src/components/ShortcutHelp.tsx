@@ -50,6 +50,7 @@ export default function ShortcutHelp(props: Props) {
         { keys: "⌘/Ctrl + M", action: "MCP Servers Panel" },
         { keys: "⌘/Ctrl + Shift + C", action: "AI + MCP Chat" },
         { keys: "⌘/Ctrl + Shift + N", action: "NETOPS Dashboard" },
+        { keys: "⌘/Ctrl + Shift + B", action: "BharatLink P2P Share" },
       ],
     },
     {

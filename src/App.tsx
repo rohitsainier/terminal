@@ -18,11 +18,13 @@ import ShortcutHelp from "./components/ShortcutHelp";
 import MCPPanel from "./components/MCPPanel";
 import MCPChat from "./components/MCPChat";
 import NetopsDashboard from "./components/netops";
+import BharatLinkDashboard from "./components/bharatlink";
 import type { AppConfig, Tab } from "./types";
 import "./styles/global.css";
 import "./styles/terminal.css";
 import "./styles/effects.css";
 import "./styles/netops.css";
+import "./styles/bharatlink.css";
 
 export default function App() {
   const [tabs, setTabs] = createSignal<Tab[]>([]);
@@ -38,6 +40,7 @@ export default function App() {
   const [showMCP, setShowMCP] = createSignal(false);
   const [showMCPChat, setShowMCPChat] = createSignal(false);
   const [showNetops, setShowNetops] = createSignal(false);
+  const [showBharatLink, setShowBharatLink] = createSignal(false);
 
   // ── Theme via hook ──
   const theme = useTheme();
@@ -113,6 +116,10 @@ export default function App() {
       e.preventDefault();
       closeAllOverlays();
       setShowNetops((v) => !v);
+    } else if (mod && e.shiftKey && (e.key === "B" || e.key === "b")) {
+      e.preventDefault();
+      closeAllOverlays();
+      setShowBharatLink((v) => !v);
     }
   }
 
@@ -125,6 +132,7 @@ export default function App() {
     setShowMCP(false);
     setShowMCPChat(false);
     setShowNetops(false);
+    setShowBharatLink(false);
   }
 
   function createTab() {
@@ -213,6 +221,7 @@ export default function App() {
     else if (actionId === "mcp-panel") setShowMCP(true);
     else if (actionId === "mcp-chat") setShowMCPChat(true);
     else if (actionId === "netops") setShowNetops(true);
+    else if (actionId === "bharatlink") setShowBharatLink(true);
     else if (actionId.startsWith("theme-")) {
       handleThemeChange(actionId.replace("theme-", ""));
     }
@@ -359,6 +368,10 @@ export default function App() {
 
       <Show when={showNetops()}>
         <NetopsDashboard onClose={() => setShowNetops(false)} />
+      </Show>
+
+      <Show when={showBharatLink()}>
+        <BharatLinkDashboard onClose={() => setShowBharatLink(false)} />
       </Show>
     </div>
   );

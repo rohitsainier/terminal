@@ -16,6 +16,7 @@ pub struct AppState {
     pub ssh_manager: Mutex<SSHManager>,
     pub session_manager: Mutex<SessionManager>,
     pub mcp_manager: Arc<Mutex<crate::mcp::MCPManager>>,
+    pub bharatlink_manager: Arc<tokio::sync::Mutex<crate::bharatlink::BharatLinkManager>>,
 }
 
 // ─── Lock Helpers ────────────────────────────────

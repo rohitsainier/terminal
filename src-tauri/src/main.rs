@@ -7,6 +7,7 @@ mod snippets;
 mod ssh;
 mod terminal;
 mod netops;
+mod bharatlink;
 
 use ai::AIEngine;
 use commands::AppState;
@@ -35,6 +36,12 @@ fn main() {
     // Auto-start enabled MCP servers
     mcp_manager.start_all_enabled();
 
+    // BharatLink P2P manager
+    let bl_config_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("flux-terminal");
+    let bharatlink_manager = bharatlink::BharatLinkManager::new(bl_config_dir);
+
     let state = AppState {
         pty_manager: PtyManager::new(),
         ai_engine: Mutex::new(ai_engine),
@@ -43,6 +50,7 @@ fn main() {
         ssh_manager: Mutex::new(ssh_manager),
         session_manager: Mutex::new(session_manager),
         mcp_manager: Arc::new(Mutex::new(mcp_manager)),
+        bharatlink_manager: Arc::new(tokio::sync::Mutex::new(bharatlink_manager)),
     };
 
     tauri::Builder::default()
@@ -149,6 +157,24 @@ fn main() {
             netops::netops_save_handshake_log,
             netops::netops_pcap_analyze,
             netops::netops_psk_audit,
+
+            // ═══ BharatLink — P2P file & text sharing ═══
+            bharatlink::bharatlink_start,
+            bharatlink::bharatlink_stop,
+            bharatlink::bharatlink_node_info,
+            bharatlink::bharatlink_get_peers,
+            bharatlink::bharatlink_add_peer,
+            bharatlink::bharatlink_trust_peer,
+            bharatlink::bharatlink_untrust_peer,
+            bharatlink::bharatlink_send_file,
+            bharatlink::bharatlink_send_text,
+            bharatlink::bharatlink_accept_transfer,
+            bharatlink::bharatlink_reject_transfer,
+            bharatlink::bharatlink_cancel_transfer,
+            bharatlink::bharatlink_get_history,
+            bharatlink::bharatlink_clear_history,
+            bharatlink::bharatlink_get_settings,
+            bharatlink::bharatlink_update_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

@@ -36,6 +36,7 @@ export default function CommandPalette(props: Props) {
     { id: "mcp-panel", icon: "🔌", label: "MCP Servers", shortcut: "⌘M" },
     { id: "mcp-chat", icon: "🤖", label: "AI + MCP Chat", shortcut: "⌘⇧C" },
     { id: "netops", icon: "🌐", label: "NETOPS Dashboard", shortcut: "⌘⇧N" },
+    { id: "bharatlink", icon: "🔗", label: "BharatLink P2P Share", shortcut: "⌘⇧B" },
   ];
 
   const filtered = createMemo(() => {

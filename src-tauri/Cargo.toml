@@ -30,6 +30,11 @@ sha1 = "0.10"
 hmac = "0.12"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
 
+# BharatLink — P2P file & text sharing
+iroh = { version = "0.95", features = ["discovery-local-network"] }
+iroh-blobs = { version = "0.97", features = ["fs-store"] }
+rand = "0.9"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
