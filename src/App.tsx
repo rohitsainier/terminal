@@ -87,7 +87,7 @@ export default function App() {
     } else if (mod && e.key === "w") {
       e.preventDefault();
       closeTab(activeTab());
-    } else if (mod && e.key === "b") {
+    } else if (mod && !e.shiftKey && e.key === "b") {
       e.preventDefault();
       setShowSidebar((s) => !s);
     } else if (mod && e.shiftKey && (e.key === "L" || e.key === "l")) {
