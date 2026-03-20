@@ -6,7 +6,6 @@ mod pty;
 mod snippets;
 mod ssh;
 mod terminal;
-mod monitor;
 mod netops;
 
 use ai::AIEngine;
@@ -113,20 +112,6 @@ fn main() {
             commands::mcp_ai_followup,
             commands::mcp_ai_plan,
             commands::mcp_ai_step,
-
-             // ═══ Monitor — all from monitor module ═══
-            monitor::monitor_fetch_tle,
-            monitor::monitor_flights,
-            monitor::monitor_iss_position,
-            monitor::monitor_news,
-            monitor::monitor_system_stats,
-            monitor::monitor_public_ip,
-            monitor::monitor_activity,
-            monitor::monitor_weather,
-            monitor::monitor_quakes,
-            monitor::monitor_crypto,
-            monitor::monitor_speedtest,
-            monitor::monitor_net_throughput,
 
             // ═══ NetOps — all from netops module ═══
             netops::netops_ping,

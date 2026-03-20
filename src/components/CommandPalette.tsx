@@ -35,7 +35,6 @@ export default function CommandPalette(props: Props) {
     { id: "settings", icon: "⚙️", label: "Settings", shortcut: "⌘," },
     { id: "mcp-panel", icon: "🔌", label: "MCP Servers", shortcut: "⌘M" },
     { id: "mcp-chat", icon: "🤖", label: "AI + MCP Chat", shortcut: "⌘⇧C" },
-    { id: "monitor", icon: "🌍", label: "Hacker Monitor", shortcut: "⌘⇧O" },
     { id: "netops", icon: "🌐", label: "NETOPS Dashboard", shortcut: "⌘⇧N" },
   ];
 

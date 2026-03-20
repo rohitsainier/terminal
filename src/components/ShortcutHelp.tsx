@@ -49,7 +49,6 @@ export default function ShortcutHelp(props: Props) {
         { keys: "⌘/Ctrl + Shift + L", action: "Snippet Library" },
         { keys: "⌘/Ctrl + M", action: "MCP Servers Panel" },
         { keys: "⌘/Ctrl + Shift + C", action: "AI + MCP Chat" },
-        { keys: "⌘/Ctrl + Shift + O", action: "Hacker Monitor Dashboard" },
         { keys: "⌘/Ctrl + Shift + N", action: "NETOPS Dashboard" },
       ],
     },
