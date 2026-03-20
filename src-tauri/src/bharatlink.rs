@@ -15,7 +15,7 @@ use iroh::{
     discovery::mdns::MdnsDiscovery,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, PublicKey, SecretKey,
+    Endpoint, PublicKey, SecretKey, Watcher,
 };
 use iroh_blobs::{store::fs::FsStore, BlobsProtocol};
 
@@ -41,6 +41,7 @@ pub struct NodeInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerInfo {
     pub node_id: String,
+    pub node_id_short: String,
     pub nickname: Option<String>,
     pub is_local: bool,
     pub last_seen: u64,
@@ -171,15 +172,30 @@ impl ProtocolHandler for MetaProtocolHandler {
             .await
             .map_err(|e| SharedState::io_err(format!("Stream error: {}", e)))?;
 
-        let mut buf = vec![0u8; 64 * 1024];
-        let n = recv
-            .read(&mut buf)
-            .await
-            .map_err(|e| SharedState::io_err(format!("Read error: {:?}", e)))?;
+        // Read full message (may arrive in multiple chunks)
+        let mut data = Vec::new();
+        let mut buf = vec![0u8; 4096];
+        loop {
+            match recv.read(&mut buf).await {
+                Ok(Some(n)) => {
+                    data.extend_from_slice(&buf[..n]);
+                    if data.len() > 256 * 1024 {
+                        return Err(SharedState::io_err("Meta message too large"));
+                    }
+                }
+                Ok(None) => break, // EOF
+                Err(e) => {
+                    return Err(SharedState::io_err(format!("Read error: {:?}", e)));
+                }
+            }
+        }
 
-        if let Some(n) = n {
-            let msg: TransferRequest = serde_json::from_slice(&buf[..n])
+        if !data.is_empty() {
+            let msg: TransferRequest = serde_json::from_slice(&data)
                 .map_err(|e| SharedState::io_err(format!("Parse error: {}", e)))?;
+
+            eprintln!("[BharatLink] Incoming transfer request: type={}, id={}, from={}",
+                msg.transfer_type, msg.id, msg.from_peer);
 
             // Store pending request so accept_transfer can find it
             {
@@ -285,6 +301,9 @@ impl FileReceiveHandler {
         from_nickname: Option<String>,
         request_id: &str,
     ) -> Result<(), String> {
+        eprintln!("[BharatLink] Starting file download: hash={}, file={}, from={}",
+            hash_str, filename, from_peer);
+
         let download_dir = self.shared.download_dir.lock().await.clone();
         let save_dir = PathBuf::from(&download_dir);
         std::fs::create_dir_all(&save_dir)
@@ -603,65 +622,96 @@ impl BharatLinkManager {
         app_handle: tauri::AppHandle,
         trusted_peers: Arc<TokioMutex<HashMap<String, String>>>,
     ) {
-        let mut known_peers: HashMap<String, u64> = HashMap::new();
+        // Track peer state: node_id -> (last_seen_ms, was_connected)
+        let mut peer_state: HashMap<String, (u64, bool)> = HashMap::new();
 
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
             // Check if endpoint is still alive
             if endpoint.is_closed() {
                 break;
             }
 
-            // Get our own endpoint addr to populate node info
             let our_addr = endpoint.addr();
             let our_id = endpoint.id().to_string();
 
-            // Check remote nodes via endpoint's remote info
-            // The mDNS discovery automatically populates the endpoint's address book
-            // We detect peers by checking endpoint connectivity
             let trusted = trusted_peers.lock().await;
             let trusted_clone = trusted.clone();
             drop(trusted);
 
-            // Emit node status with relay info
+            // Emit node status
             let relay_url = our_addr.relay_urls().next().map(|u| u.to_string());
             let local_addrs: Vec<String> = our_addr.ip_addrs().map(|a| a.to_string()).collect();
 
             let status = NodeInfo {
                 node_id: our_id.clone(),
-                node_id_short: if our_id.len() >= 8 {
-                    our_id[..8].to_string()
-                } else {
-                    our_id.clone()
-                },
+                node_id_short: short_id(&our_id),
                 is_running: true,
                 relay_url,
                 local_addrs,
-                discovered_peers: known_peers.len(),
+                discovered_peers: peer_state.len(),
             };
             let _ = app_handle.emit("bharatlink-node-status", &status);
 
-            // For trusted peers, try to check if they're reachable
+            // Check each trusted peer's connectivity
             for (peer_id, nickname) in &trusted_clone {
                 if peer_id == &our_id {
                     continue;
                 }
 
                 let now = epoch_ms();
-                let is_known = known_peers.contains_key(peer_id);
 
-                if !is_known {
-                    known_peers.insert(peer_id.clone(), now);
+                // Check if iroh has addressing info for this peer
+                let is_connected = if let Ok(peer_key) = peer_id.parse::<PublicKey>() {
+                    // Check latency — returns Some if iroh has seen this peer
+                    let has_latency = endpoint.latency(peer_key).is_some();
+
+                    // Check conn_type for active connection pathway
+                    let has_path = if let Some(mut conn_type) = endpoint.conn_type(peer_key) {
+                        let ct = conn_type.get();
+                        !matches!(ct, iroh::endpoint::ConnectionType::None)
+                    } else {
+                        false
+                    };
+
+                    has_latency || has_path
+                } else {
+                    false
+                };
+
+                let prev_state = peer_state.get(peer_id);
+                let is_new = prev_state.is_none();
+                let status_changed = prev_state
+                    .map(|(_, was_connected)| *was_connected != is_connected)
+                    .unwrap_or(false);
+
+                // Update tracked state
+                let last_seen = if is_connected { now } else {
+                    prev_state.map(|(ls, _)| *ls).unwrap_or(0)
+                };
+                peer_state.insert(peer_id.clone(), (last_seen, is_connected));
+
+                // Emit on first discovery or status change
+                if is_new || status_changed {
                     let peer_info = PeerInfo {
+                        node_id_short: short_id(peer_id),
                         node_id: peer_id.clone(),
                         nickname: Some(nickname.clone()),
                         is_local: false,
-                        last_seen: now,
-                        is_connected: false,
+                        last_seen,
+                        is_connected,
                         is_trusted: true,
                     };
-                    let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
+
+                    if is_connected || is_new {
+                        let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
+                    }
+
+                    // If peer went offline, emit peer-lost so UI can update
+                    if status_changed && !is_connected {
+                        let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
+                    }
                 }
             }
         }
@@ -726,6 +776,7 @@ impl BharatLinkManager {
             for (id, nickname) in trusted.iter() {
                 if !self.peers.contains_key(id) {
                     result.push(PeerInfo {
+                        node_id_short: short_id(id),
                         node_id: id.clone(),
                         nickname: Some(nickname.clone()),
                         is_local: false,
@@ -754,6 +805,7 @@ impl BharatLinkManager {
             .unwrap_or(false);
 
         let peer = PeerInfo {
+            node_id_short: short_id(&node_id),
             node_id: node_id.clone(),
             nickname: nickname.clone(),
             is_local: false,
@@ -902,6 +954,11 @@ impl BharatLinkManager {
         send.finish()
             .map_err(|e| format!("Finish error: {}", e))?;
 
+        // Give time for the receiver to read the META request before dropping connection
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        drop(send);
+        drop(conn);
+
         // Record in history
         let nickname = {
             let trusted = self.trusted_peers_shared.lock().await;
@@ -1036,16 +1093,36 @@ impl BharatLinkManager {
                         let from_nickname = req.from_nickname.clone();
                         let request_id = req.id.clone();
 
+                        let app_handle_for_err = self.app_handle.clone();
+
                         // Spawn download in background
                         tokio::spawn(async move {
                             if let Err(e) = receiver.download_blob(
                                 &hash,
                                 &filename,
                                 &from_peer,
-                                from_nickname,
+                                from_nickname.clone(),
                                 &request_id,
                             ).await {
                                 eprintln!("[BharatLink] File download failed: {}", e);
+                                // Emit failed entry so frontend knows
+                                let fail_entry = TransferHistoryEntry {
+                                    id: request_id.clone(),
+                                    direction: "receive".to_string(),
+                                    peer_id: from_peer.clone(),
+                                    peer_nickname: from_nickname,
+                                    transfer_type: "file".to_string(),
+                                    filename: Some(filename.clone()),
+                                    file_size: None,
+                                    text_content: None,
+                                    status: "failed".to_string(),
+                                    timestamp: epoch_ms(),
+                                    duration_ms: None,
+                                    save_path: Some(format!("Error: {}", e)),
+                                };
+                                if let Some(ref handle) = app_handle_for_err {
+                                    let _ = handle.emit("bharatlink-transfer-complete", &fail_entry);
+                                }
                             }
                         });
                     }
@@ -1090,7 +1167,11 @@ impl BharatLinkManager {
         self.settings.clone()
     }
 
-    pub fn update_settings(&mut self, settings: BharatLinkSettings) -> Result<(), String> {
+    pub async fn update_settings(&mut self, settings: BharatLinkSettings) -> Result<(), String> {
+        // Update shared download dir if it changed
+        if settings.download_dir != self.settings.download_dir {
+            *self.download_dir_shared.lock().await = settings.download_dir.clone();
+        }
         self.settings = settings;
         self.save_state()
     }
@@ -1103,6 +1184,14 @@ fn epoch_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn short_id(id: &str) -> String {
+    if id.len() >= 8 {
+        id[..8].to_string()
+    } else {
+        id.to_string()
+    }
 }
 
 // ═══ Tauri Commands ═════════════════════════════════════════════════════
@@ -1246,5 +1335,5 @@ pub async fn bharatlink_update_settings(
     settings: BharatLinkSettings,
 ) -> Result<(), String> {
     let mut mgr = state.bharatlink_manager.lock().await;
-    mgr.update_settings(settings)
+    mgr.update_settings(settings).await
 }

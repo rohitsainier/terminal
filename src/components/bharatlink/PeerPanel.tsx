@@ -15,6 +15,8 @@ export default function PeerPanel(props: Props) {
   const trustedPeers = () =>
     props.store.peers().filter((p) => p.is_trusted);
 
+  const onlinePeers = () => props.store.peers().filter((p) => p.is_connected).length;
+
   const handleAdd = async () => {
     const id = addInput().trim();
     if (!id) return;
@@ -24,13 +26,15 @@ export default function PeerPanel(props: Props) {
     setShowAddForm(false);
   };
 
-  const formatLastSeen = (ts: number | null) => {
-    if (!ts) return "never";
+  const formatLastSeen = (ts: number | null, isConnected: boolean) => {
+    if (isConnected) return "online";
+    if (!ts) return "offline";
     const diff = Math.floor((Date.now() - ts) / 1000);
     if (diff < 0) return "just now";
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return "offline";
   };
 
   return (
@@ -38,6 +42,11 @@ export default function PeerPanel(props: Props) {
       <div class="blnk-panel-header">
         <span class="blnk-panel-icon">📡</span>
         <span>PEERS</span>
+        <Show when={props.store.isRunning()}>
+          <span class="blnk-peer-count">
+            {onlinePeers()} online
+          </span>
+        </Show>
         <button
           class="blnk-btn-icon"
           onClick={() => props.store.refreshPeers()}
@@ -58,16 +67,29 @@ export default function PeerPanel(props: Props) {
                 classList={{
                   "blnk-peer-selected":
                     props.store.selectedPeer() === peer.node_id,
+                  "blnk-peer-online": peer.is_connected,
+                  "blnk-peer-offline": !peer.is_connected,
                 }}
                 onClick={() => props.store.setSelectedPeer(peer.node_id)}
               >
-                <span class="blnk-peer-icon">✓</span>
+                <span
+                  class="blnk-peer-status-dot"
+                  classList={{
+                    "blnk-dot-online": peer.is_connected,
+                    "blnk-dot-offline": !peer.is_connected,
+                  }}
+                />
                 <div class="blnk-peer-info">
                   <span class="blnk-peer-name">
                     {peer.nickname || peer.node_id_short}
                   </span>
-                  <span class="blnk-peer-meta">
-                    {formatLastSeen(peer.last_seen)}
+                  <span
+                    class="blnk-peer-meta"
+                    classList={{
+                      "blnk-meta-online": peer.is_connected,
+                    }}
+                  >
+                    {formatLastSeen(peer.last_seen, peer.is_connected)}
                   </span>
                 </div>
                 <button
@@ -104,16 +126,29 @@ export default function PeerPanel(props: Props) {
                 classList={{
                   "blnk-peer-selected":
                     props.store.selectedPeer() === peer.node_id,
+                  "blnk-peer-online": peer.is_connected,
+                  "blnk-peer-offline": !peer.is_connected,
                 }}
                 onClick={() => props.store.setSelectedPeer(peer.node_id)}
               >
-                <span class="blnk-peer-icon">◉</span>
+                <span
+                  class="blnk-peer-status-dot"
+                  classList={{
+                    "blnk-dot-online": peer.is_connected,
+                    "blnk-dot-offline": !peer.is_connected,
+                  }}
+                />
                 <div class="blnk-peer-info">
                   <span class="blnk-peer-name">
                     {peer.nickname || peer.node_id_short}
                   </span>
-                  <span class="blnk-peer-meta">
-                    {formatLastSeen(peer.last_seen)}
+                  <span
+                    class="blnk-peer-meta"
+                    classList={{
+                      "blnk-meta-online": peer.is_connected,
+                    }}
+                  >
+                    {formatLastSeen(peer.last_seen, peer.is_connected)}
                   </span>
                 </div>
                 <button

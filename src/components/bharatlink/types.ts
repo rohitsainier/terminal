@@ -30,6 +30,7 @@ export type TransferType = "file" | "text";
 export type TransferStatus =
   | "pending"
   | "in_progress"
+  | "complete"
   | "completed"
   | "failed"
   | "cancelled"
