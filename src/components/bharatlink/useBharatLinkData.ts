@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BharatLinkStore,
+  BharatLinkSignal,
   NodeInfo,
   PeerInfo,
   TransferProgress,
@@ -25,6 +26,8 @@ export function useBharatLinkData(): BharatLinkStore {
   const [pendingRequests, setPendingRequests] = createSignal<TransferRequest[]>([]);
   const [history, setHistory] = createSignal<TransferHistoryEntry[]>([]);
   const [settings, setSettings] = createSignal<BharatLinkSettings | null>(null);
+  const [deliveredMessages, setDeliveredMessages] = createSignal<Set<string>>(new Set());
+  const [typingPeers, setTypingPeers] = createSignal<Set<string>>(new Set());
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [utc, setUtc] = createSignal("");
@@ -100,8 +103,8 @@ export function useBharatLinkData(): BharatLinkStore {
         setPendingRequests((prev) =>
           prev.filter((r) => r.id !== e.payload.id)
         );
-        // Add to history
-        setHistory((prev) => [e.payload, ...prev].slice(0, 500));
+        // Add to history (append at end so newest is last — matches chat scroll)
+        setHistory((prev) => [...prev, e.payload].slice(-500));
       })
     );
 
@@ -109,6 +112,44 @@ export function useBharatLinkData(): BharatLinkStore {
       await listen<NodeInfo>("bharatlink-node-status", (e) => {
         setNodeInfo(e.payload);
         setIsRunning(e.payload.is_running);
+      })
+    );
+
+    // Signal listener (read receipts, typing indicators)
+    unlisteners.push(
+      await listen<BharatLinkSignal>("bharatlink-signal", (e) => {
+        const signal = e.payload;
+        if (signal.signal_type === "delivered") {
+          // Mark ALL sent messages to this peer as delivered
+          const peerSentIds = history()
+            .filter((h) => h.peer_id === signal.from_peer && h.direction === "send")
+            .map((h) => h.id);
+          setDeliveredMessages((prev) => {
+            const next = new Set(prev);
+            for (const id of peerSentIds) next.add(id);
+            return next;
+          });
+        } else if (signal.signal_type === "typing") {
+          setTypingPeers((prev) => {
+            const next = new Set(prev);
+            next.add(signal.from_peer);
+            return next;
+          });
+          // Auto-clear typing after 4 seconds
+          setTimeout(() => {
+            setTypingPeers((prev) => {
+              const next = new Set(prev);
+              next.delete(signal.from_peer);
+              return next;
+            });
+          }, 4000);
+        } else if (signal.signal_type === "stop_typing") {
+          setTypingPeers((prev) => {
+            const next = new Set(prev);
+            next.delete(signal.from_peer);
+            return next;
+          });
+        }
       })
     );
   };
@@ -269,6 +310,8 @@ export function useBharatLinkData(): BharatLinkStore {
   const refreshHistory = async () => {
     try {
       const h = await invoke<TransferHistoryEntry[]>("bharatlink_get_history");
+      // Sort by timestamp ascending (oldest first) for chat scroll
+      h.sort((a, b) => a.timestamp - b.timestamp);
       setHistory(h);
     } catch (e) {
       setError(String(e));
@@ -302,6 +345,18 @@ export function useBharatLinkData(): BharatLinkStore {
     }
   };
 
+  const sendSignal = async (peerId: string, signalType: string, messageId?: string) => {
+    try {
+      await invoke("bharatlink_send_signal", {
+        peerId,
+        signalType,
+        messageId: messageId || null,
+      });
+    } catch {
+      // Signals are fire-and-forget, ignore errors
+    }
+  };
+
   const statusText = () => {
     if (loading()) return "PROCESSING...";
     if (error()) return `ERROR: ${error()}`;
@@ -327,6 +382,8 @@ export function useBharatLinkData(): BharatLinkStore {
     activeTransfers,
     pendingRequests,
     history,
+    deliveredMessages,
+    typingPeers,
     settings,
     loading,
     error,
@@ -350,5 +407,6 @@ export function useBharatLinkData(): BharatLinkStore {
     clearHistory,
     getSettings,
     updateSettings,
+    sendSignal,
   };
 }

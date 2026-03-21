@@ -84,6 +84,9 @@ Sovereign peer-to-peer file & text sharing. No servers, no accounts, no cloud. I
 - **Drag & drop** — Drop files onto the chat window to send
 - **Screenshot & clipboard sharing** — Instant screen capture & clipboard sync
 - **QR code pairing** — Scan to connect, no manual ID copying
+- **Read receipts & typing indicator** — Know when messages are delivered
+- **Image preview & link cards** — Rich inline media previews in chat
+- **Auto-accept from trusted** — Trusted peers' transfers skip manual approval
 - **Works offline** — LAN transfers need no internet
 
 </td>
@@ -179,6 +182,11 @@ BharatLink is a sovereign peer-to-peer file and text sharing system built into F
 | **QR Code Pairing** | Generate a QR code with your Endpoint ID for easy peer adding |
 | **Device Names** | Set a custom name ("Rohit's MacBook") visible to all peers |
 | **Trust System** | Approve peers before accepting transfers; nickname trusted peers |
+| **Read Receipts** | Single check (✓) = sent, double check (✓✓) = delivered to peer |
+| **Typing Indicator** | See when your peer is typing a message in real-time |
+| **Image Preview** | Received images show inline thumbnails in chat bubbles |
+| **Link Preview** | URLs in messages show rich preview cards with domain and link |
+| **Auto-Accept** | Trusted peers' files auto-download without manual accept |
 | **Offline/LAN** | Works without internet via mDNS local discovery |
 | **Cross-Network** | NAT hole punching + relay fallback for internet transfers |
 | **Content Dedup** | Same file sent twice? Second transfer is instant (BLAKE3 hash match) |

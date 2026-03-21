@@ -24,6 +24,7 @@ use futures_lite::StreamExt;
 
 const BHARATLINK_TEXT_ALPN: &[u8] = b"bharatlink/text/1";
 const BHARATLINK_META_ALPN: &[u8] = b"bharatlink/meta/1";
+const BHARATLINK_SIGNAL_ALPN: &[u8] = b"bharatlink/signal/1";
 const MAX_HISTORY: usize = 500;
 const MAX_TEXT_SIZE: usize = 10 * 1024 * 1024; // 10MB text limit
 
@@ -90,6 +91,15 @@ pub struct TransferHistoryEntry {
     pub timestamp: u64,
     pub duration_ms: Option<u64>,
     pub save_path: Option<String>,
+}
+
+/// Lightweight signals: read receipts, typing indicators, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BharatLinkSignal {
+    pub signal_type: String, // "delivered" | "read" | "typing" | "stop_typing"
+    pub message_id: Option<String>,
+    pub from_peer: String,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +174,9 @@ impl SharedState {
 #[derive(Debug, Clone)]
 struct MetaProtocolHandler {
     shared: SharedState,
+    settings: Arc<TokioMutex<BharatLinkSettings>>,
+    store: FsStore,
+    endpoint_for_accept: Endpoint,
 }
 
 impl ProtocolHandler for MetaProtocolHandler {
@@ -198,13 +211,72 @@ impl ProtocolHandler for MetaProtocolHandler {
             eprintln!("[BharatLink] Incoming transfer request: type={}, id={}, from={}",
                 msg.transfer_type, msg.id, msg.from_peer);
 
-            // Store pending request so accept_transfer can find it
-            {
-                let mut pending = self.shared.pending_requests.lock().await;
-                pending.insert(msg.id.clone(), msg.clone());
+            // Check auto-accept settings
+            let settings = self.settings.lock().await;
+            let is_trusted = {
+                let trusted = self.shared.trusted_peers.lock().await;
+                trusted.contains_key(&msg.from_peer)
+            };
+
+            // Skip if accept_from_trusted_only and sender is not trusted
+            if settings.accept_from_trusted_only && !is_trusted {
+                eprintln!("[BharatLink] Rejecting request from untrusted peer: {}", msg.from_peer);
+                return Ok(());
             }
 
-            let _ = self.shared.app_handle.emit("bharatlink-incoming-request", &msg);
+            let should_auto_accept = settings.auto_accept_from_trusted && is_trusted;
+            drop(settings);
+
+            if should_auto_accept {
+                eprintln!("[BharatLink] Auto-accepting transfer from trusted peer: {}", msg.from_peer);
+
+                if msg.transfer_type == "file" {
+                    if let (Some(hash), Some(filename)) = (&msg.blob_hash, &msg.filename) {
+                        let receiver = FileReceiveHandler {
+                            shared: self.shared.clone(),
+                            store: self.store.clone(),
+                            endpoint: self.endpoint_for_accept.clone(),
+                        };
+                        let hash = hash.clone();
+                        let filename = filename.clone();
+                        let file_size = msg.file_size.unwrap_or(0);
+                        let from_peer = msg.from_peer.clone();
+                        let from_nickname = msg.from_nickname.clone();
+                        let request_id = msg.id.clone();
+                        let app_handle = self.shared.app_handle.clone();
+
+                        tokio::spawn(async move {
+                            // Small delay to let META connection close cleanly
+                            // before opening a new blob fetch connection
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+                            if let Err(e) = receiver.download_blob(
+                                &hash, &filename, file_size,
+                                &from_peer, from_nickname.clone(), &request_id,
+                            ).await {
+                                eprintln!("[BharatLink] Auto-accept download failed: {}", e);
+                                let fail_entry = TransferHistoryEntry {
+                                    id: request_id, direction: "receive".to_string(),
+                                    peer_id: from_peer, peer_nickname: from_nickname,
+                                    transfer_type: "file".to_string(),
+                                    filename: Some(filename), file_size: None,
+                                    text_content: None, status: "failed".to_string(),
+                                    timestamp: epoch_ms(), duration_ms: None,
+                                    save_path: Some(format!("Error: {}", e)),
+                                };
+                                let _ = app_handle.emit("bharatlink-transfer-complete", &fail_entry);
+                            }
+                        });
+                    }
+                }
+            } else {
+                // Store pending request so accept_transfer can find it
+                {
+                    let mut pending = self.shared.pending_requests.lock().await;
+                    pending.insert(msg.id.clone(), msg.clone());
+                }
+                let _ = self.shared.app_handle.emit("bharatlink-incoming-request", &msg);
+            }
         }
 
         Ok(())
@@ -215,6 +287,7 @@ impl ProtocolHandler for MetaProtocolHandler {
 #[derive(Debug, Clone)]
 struct TextProtocolHandler {
     shared: SharedState,
+    endpoint_for_signal: Endpoint,
 }
 
 impl ProtocolHandler for TextProtocolHandler {
@@ -281,6 +354,67 @@ impl ProtocolHandler for TextProtocolHandler {
         // Emit to frontend
         let _ = self.shared.app_handle.emit("bharatlink-transfer-complete", &entry);
 
+        // Send "delivered" signal back to sender (fire-and-forget)
+        let ep = self.endpoint_for_signal.clone();
+        let remote_key = remote_id;
+        let msg_id = entry.id.clone();
+        let our_id = ep.id().to_string();
+        tokio::spawn(async move {
+            if let Ok(conn) = ep.connect(remote_key, BHARATLINK_SIGNAL_ALPN).await {
+                let signal = BharatLinkSignal {
+                    signal_type: "delivered".to_string(),
+                    message_id: Some(msg_id),
+                    from_peer: our_id,
+                    timestamp: epoch_ms(),
+                };
+                if let Ok(data) = serde_json::to_vec(&signal) {
+                    if let Ok(mut send) = conn.open_uni().await {
+                        let _ = send.write_all(&data).await;
+                        let _ = send.finish();
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+}
+
+/// Handles incoming signal connections (read receipts, typing indicators)
+#[derive(Debug, Clone)]
+struct SignalProtocolHandler {
+    shared: SharedState,
+}
+
+impl ProtocolHandler for SignalProtocolHandler {
+    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
+        let mut recv = conn
+            .accept_uni()
+            .await
+            .map_err(|e| SharedState::io_err(format!("Stream error: {}", e)))?;
+
+        let mut data = Vec::new();
+        let mut buf = vec![0u8; 1024];
+        loop {
+            match recv.read(&mut buf).await {
+                Ok(Some(n)) => {
+                    data.extend_from_slice(&buf[..n]);
+                    if data.len() > 4096 {
+                        return Err(SharedState::io_err("Signal too large"));
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => return Err(SharedState::io_err(format!("Read error: {:?}", e))),
+            }
+        }
+
+        if !data.is_empty() {
+            if let Ok(signal) = serde_json::from_slice::<BharatLinkSignal>(&data) {
+                let _ = self.shared.app_handle.emit("bharatlink-signal", &signal);
+            }
+        }
+
         Ok(())
     }
 }
@@ -342,25 +476,40 @@ impl FileReceiveHandler {
         );
 
         // Connect to the sender's blob protocol endpoint
+        eprintln!("[BharatLink] Connecting to sender {} for blob fetch...", from_peer);
         let conn = self.endpoint
             .connect(sender_key, iroh_blobs::ALPN)
             .await
-            .map_err(|e| format!("Failed to connect for file download: {}", e))?;
+            .map_err(|e| format!("Failed to connect for file download: {:?}", e))?;
+        eprintln!("[BharatLink] Connected to sender, starting blob fetch...");
 
-        // Fetch the blob using streaming API for progress updates
+        // Emit initial "transferring" progress
+        let _ = self.shared.app_handle.emit(
+            "bharatlink-transfer-progress",
+            &TransferProgress {
+                transfer_id: request_id.to_string(),
+                direction: "receive".to_string(),
+                filename: filename.to_string(),
+                bytes_transferred: 0,
+                total_bytes: file_size,
+                percent: 0.0,
+                speed_bps: 0,
+                status: "transferring".to_string(),
+                error: None,
+            },
+        );
+
+        // Fetch the blob with streaming progress
         let hash_and_format = iroh_blobs::HashAndFormat::raw(hash);
-        let get_progress = self.store
-            .remote()
-            .fetch(conn, hash_and_format);
-
-        // Stream progress events instead of blocking on .complete()
+        let get_progress = self.store.remote().fetch(conn, hash_and_format);
         let mut stream = get_progress.stream();
         let mut last_progress_emit = Instant::now();
+        let mut download_ok = false;
 
         while let Some(item) = stream.next().await {
             match item {
                 GetProgressItem::Progress(bytes_received) => {
-                    // Throttle progress events to ~10/sec to avoid flooding frontend
+                    // Throttle progress events to ~10/sec
                     if last_progress_emit.elapsed().as_millis() >= 100 {
                         let elapsed = start_time.elapsed().as_secs_f64();
                         let speed = if elapsed > 0.0 { (bytes_received as f64 / elapsed) as u64 } else { 0 };
@@ -388,10 +537,13 @@ impl FileReceiveHandler {
                     }
                 }
                 GetProgressItem::Done(_stats) => {
-                    eprintln!("[BharatLink] Download stream complete for {}", filename);
+                    eprintln!("[BharatLink] Download complete for {}", filename);
+                    download_ok = true;
                     break;
                 }
                 GetProgressItem::Error(e) => {
+                    let err_msg = format!("Download failed: {:?}", e);
+                    eprintln!("[BharatLink] {}", err_msg);
                     let _ = self.shared.app_handle.emit(
                         "bharatlink-transfer-progress",
                         &TransferProgress {
@@ -403,12 +555,31 @@ impl FileReceiveHandler {
                             percent: 0.0,
                             speed_bps: 0,
                             status: "error".to_string(),
-                            error: Some(format!("{}", e)),
+                            error: Some(err_msg.clone()),
                         },
                     );
-                    return Err(format!("Download failed: {}", e));
+                    return Err(err_msg);
                 }
             }
+        }
+
+        if !download_ok {
+            let err_msg = "Download stream ended unexpectedly".to_string();
+            let _ = self.shared.app_handle.emit(
+                "bharatlink-transfer-progress",
+                &TransferProgress {
+                    transfer_id: request_id.to_string(),
+                    direction: "receive".to_string(),
+                    filename: filename.to_string(),
+                    bytes_transferred: 0,
+                    total_bytes: file_size,
+                    percent: 0.0,
+                    speed_bps: 0,
+                    status: "error".to_string(),
+                    error: Some(err_msg.clone()),
+                },
+            );
+            return Err(err_msg);
         }
 
         // Read the downloaded blob and write to file
@@ -480,6 +651,7 @@ pub struct BharatLinkManager {
 
     // config
     settings: BharatLinkSettings,
+    settings_shared: Arc<TokioMutex<BharatLinkSettings>>,
     download_dir_shared: Arc<TokioMutex<String>>,
     config_dir: PathBuf,
     data_dir: PathBuf,
@@ -497,6 +669,7 @@ impl BharatLinkManager {
 
         let bl_config_dir = config_dir.join("bharatlink");
 
+        let default_settings = BharatLinkSettings::default();
         let mut mgr = Self {
             endpoint: None,
             router: None,
@@ -508,7 +681,8 @@ impl BharatLinkManager {
             pending_requests_shared: Arc::new(TokioMutex::new(HashMap::new())),
             accepted_transfers: std::collections::HashSet::new(),
             file_receiver: None,
-            settings: BharatLinkSettings::default(),
+            settings: default_settings.clone(),
+            settings_shared: Arc::new(TokioMutex::new(default_settings)),
             download_dir_shared: Arc::new(TokioMutex::new(String::new())),
             config_dir: bl_config_dir,
             data_dir,
@@ -550,8 +724,9 @@ impl BharatLinkManager {
             }
         }
 
-        // Initialize shared download dir
+        // Initialize shared state
         self.download_dir_shared = Arc::new(TokioMutex::new(self.settings.download_dir.clone()));
+        self.settings_shared = Arc::new(TokioMutex::new(self.settings.clone()));
     }
 
     fn save_state(&self) -> Result<(), String> {
@@ -642,6 +817,7 @@ impl BharatLinkManager {
             .alpns(vec![
                 BHARATLINK_META_ALPN.to_vec(),
                 BHARATLINK_TEXT_ALPN.to_vec(),
+                BHARATLINK_SIGNAL_ALPN.to_vec(),
             ])
             .bind()
             .await
@@ -670,8 +846,15 @@ impl BharatLinkManager {
         let blobs = BlobsProtocol::new(&store, None);
         let meta_handler = MetaProtocolHandler {
             shared: shared.clone(),
+            settings: self.settings_shared.clone(),
+            store: store.clone(),
+            endpoint_for_accept: endpoint.clone(),
         };
         let text_handler = TextProtocolHandler {
+            shared: shared.clone(),
+            endpoint_for_signal: endpoint.clone(),
+        };
+        let signal_handler = SignalProtocolHandler {
             shared: shared.clone(),
         };
 
@@ -682,11 +865,12 @@ impl BharatLinkManager {
             endpoint: endpoint.clone(),
         });
 
-        // Build router with ALL protocols — blobs + meta + text
+        // Build router with ALL protocols — blobs + meta + text + signal
         let router = Router::builder(endpoint.clone())
             .accept(iroh_blobs::ALPN, blobs)
             .accept(BHARATLINK_META_ALPN, meta_handler)
             .accept(BHARATLINK_TEXT_ALPN, text_handler)
+            .accept(BHARATLINK_SIGNAL_ALPN, signal_handler)
             .spawn();
 
         // Spawn peer discovery polling loop
@@ -1272,7 +1456,8 @@ impl BharatLinkManager {
         if settings.download_dir != self.settings.download_dir {
             *self.download_dir_shared.lock().await = settings.download_dir.clone();
         }
-        self.settings = settings;
+        self.settings = settings.clone();
+        *self.settings_shared.lock().await = settings;
         self.save_state()
     }
 
@@ -1408,6 +1593,43 @@ impl BharatLinkManager {
         // Prefix with [CLIPBOARD] marker so receiver knows it's clipboard content
         let text = format!("[CLIPBOARD]{}", clipboard_text);
         self.send_text(peer_id, text).await
+    }
+
+    // ── Signals (typing indicator, read receipts) ──────────────────────
+
+    pub async fn send_signal(
+        &self,
+        peer_id: String,
+        signal_type: String,
+        message_id: Option<String>,
+    ) -> Result<(), String> {
+        let endpoint = self.endpoint.as_ref().ok_or("Node not running")?.clone();
+
+        let peer_key: PublicKey = peer_id
+            .parse()
+            .map_err(|e| format!("Invalid peer ID: {}", e))?;
+
+        let signal = BharatLinkSignal {
+            signal_type,
+            message_id,
+            from_peer: endpoint.id().to_string(),
+            timestamp: epoch_ms(),
+        };
+
+        let data = serde_json::to_vec(&signal).map_err(|e| format!("Serialize error: {}", e))?;
+
+        let conn = endpoint
+            .connect(peer_key, BHARATLINK_SIGNAL_ALPN)
+            .await
+            .map_err(|e| format!("Signal connect error: {}", e))?;
+
+        let mut send = conn.open_uni().await.map_err(|e| format!("Stream error: {}", e))?;
+        send.write_all(&data).await.map_err(|e| format!("Write error: {}", e))?;
+        send.finish().map_err(|e| format!("Finish error: {}", e))?;
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        Ok(())
     }
 }
 
@@ -1600,6 +1822,17 @@ pub async fn bharatlink_capture_screenshot(
 ) -> Result<String, String> {
     let mut mgr = state.bharatlink_manager.lock().await;
     mgr.capture_and_send_screenshot(peer_id).await
+}
+
+#[tauri::command]
+pub async fn bharatlink_send_signal(
+    state: tauri::State<'_, crate::commands::AppState>,
+    peer_id: String,
+    signal_type: String,
+    message_id: Option<String>,
+) -> Result<(), String> {
+    let mgr = state.bharatlink_manager.lock().await;
+    mgr.send_signal(peer_id, signal_type, message_id).await
 }
 
 #[tauri::command]

@@ -75,6 +75,15 @@ export interface TransferHistoryEntry {
   save_path: string | null;
 }
 
+// ─── Signals (read receipts, typing indicators) ─────────────────────────
+
+export interface BharatLinkSignal {
+  signal_type: "delivered" | "read" | "typing" | "stop_typing";
+  message_id: string | null;
+  from_peer: string;
+  timestamp: number;
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────
 
 export interface BharatLinkSettings {
@@ -108,6 +117,10 @@ export interface BharatLinkStore {
   pendingRequests: Accessor<TransferRequest[]>;
   history: Accessor<TransferHistoryEntry[]>;
 
+  // Signals
+  deliveredMessages: Accessor<Set<string>>;
+  typingPeers: Accessor<Set<string>>;
+
   // Settings
   settings: Accessor<BharatLinkSettings | null>;
 
@@ -136,4 +149,5 @@ export interface BharatLinkStore {
   clearHistory: () => Promise<void>;
   getSettings: () => Promise<void>;
   updateSettings: (settings: BharatLinkSettings) => Promise<void>;
+  sendSignal: (peerId: string, signalType: string, messageId?: string) => Promise<void>;
 }

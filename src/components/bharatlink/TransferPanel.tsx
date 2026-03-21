@@ -1,6 +1,7 @@
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   BharatLinkStore,
   TransferHistoryEntry,
@@ -14,6 +15,28 @@ type ChatItem =
   | { kind: "request"; entry: TransferRequest; ts: number }
   | { kind: "active"; entry: TransferProgress; ts: number };
 
+// ─── Image file detection ───────────────────────────────────────────
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "tiff"]);
+const isImageFile = (filename: string | null): boolean => {
+  if (!filename) return false;
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  return IMAGE_EXTS.has(ext);
+};
+
+// ─── URL detection for link previews ────────────────────────────────
+const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
+const extractUrls = (text: string): string[] => {
+  return text.match(URL_REGEX) || [];
+};
+
+const getDomain = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
 interface Props {
   store: BharatLinkStore;
 }
@@ -24,6 +47,8 @@ export default function TransferPanel(props: Props) {
   let messagesRef: HTMLDivElement | undefined;
   let wasNearBottom = true;
   let dragCounter = 0;
+  let typingTimeout: ReturnType<typeof setTimeout> | undefined;
+  let lastTypingSent = 0;
 
   // ─── Tauri drag-drop listener for native file paths ─────────────
   let unlistenDrop: UnlistenFn | undefined;
@@ -44,6 +69,7 @@ export default function TransferPanel(props: Props) {
 
   onCleanup(() => {
     unlistenDrop?.();
+    if (typingTimeout) clearTimeout(typingTimeout);
   });
 
   const handleDragEnter = (e: DragEvent) => {
@@ -71,6 +97,13 @@ export default function TransferPanel(props: Props) {
     if (!id) return null;
     const peer = props.store.peers().find((p) => p.node_id === id);
     return peer?.nickname || peer?.node_id_short || id.slice(0, 12);
+  };
+
+  // ─── Typing indicator for selected peer ───────────────────────────
+  const isSelectedPeerTyping = () => {
+    const peerId = props.store.selectedPeer();
+    if (!peerId) return false;
+    return props.store.typingPeers().has(peerId);
   };
 
   // ─── Unified chat timeline ────────────────────────────────────────
@@ -102,31 +135,32 @@ export default function TransferPanel(props: Props) {
   });
 
   // ─── Auto-scroll ──────────────────────────────────────────────────
-  const isNearBottom = () => {
-    if (!messagesRef) return true;
-    const { scrollTop, scrollHeight, clientHeight } = messagesRef;
-    return scrollHeight - scrollTop - clientHeight < 100;
+  const scrollToBottom = () => {
+    if (messagesRef) {
+      messagesRef.scrollTop = messagesRef.scrollHeight;
+    }
   };
 
-  // Only auto-scroll when history/requests change (not on progress ticks)
+  // Track previous item count to detect new messages
+  let prevItemCount = 0;
+  let prevActiveCount = 0;
+
+  // Auto-scroll when new chat items arrive
   createEffect(() => {
-    chatItems(); // track dependency — does NOT include active transfers
-    wasNearBottom = isNearBottom();
-    setTimeout(() => {
-      if (messagesRef && wasNearBottom) {
-        messagesRef.scrollTop = messagesRef.scrollHeight;
-      }
-    }, 0);
+    const items = chatItems();
+    const count = items.length;
+    if (count > prevItemCount) {
+      // New message arrived — scroll to bottom
+      setTimeout(scrollToBottom, 0);
+    }
+    prevItemCount = count;
   });
 
   // Scroll once when a new active transfer appears (not on every tick)
-  let prevActiveCount = 0;
   createEffect(() => {
     const count = props.store.activeTransfers().length;
-    if (count > prevActiveCount && messagesRef) {
-      setTimeout(() => {
-        messagesRef!.scrollTop = messagesRef!.scrollHeight;
-      }, 0);
+    if (count > prevActiveCount) {
+      setTimeout(scrollToBottom, 0);
     }
     prevActiveCount = count;
   });
@@ -161,7 +195,6 @@ export default function TransferPanel(props: Props) {
     });
     if (selected) {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
         const files = await invoke<string[]>("bharatlink_list_dir_files", { dirPath: selected as string });
         if (files.length > 0) {
           await props.store.sendFiles(peerId, files);
@@ -195,6 +228,8 @@ export default function TransferPanel(props: Props) {
     const peerId = props.store.selectedPeer();
     const text = textInput().trim();
     if (!peerId || !text) return;
+    // Send stop_typing signal
+    props.store.sendSignal(peerId, "stop_typing");
     await props.store.sendText(peerId, text);
     setTextInput("");
   };
@@ -204,6 +239,27 @@ export default function TransferPanel(props: Props) {
       e.preventDefault();
       e.stopPropagation();
       handleSendText();
+    }
+  };
+
+  const handleTextInput = (e: InputEvent) => {
+    const target = e.currentTarget as HTMLInputElement;
+    setTextInput(target.value);
+
+    // Send typing signal (throttled to once per 2 seconds)
+    const peerId = props.store.selectedPeer();
+    if (peerId && target.value.trim()) {
+      const now = Date.now();
+      if (now - lastTypingSent > 2000) {
+        lastTypingSent = now;
+        props.store.sendSignal(peerId, "typing");
+      }
+
+      // Clear previous timeout, set new one for stop_typing
+      if (typingTimeout) clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => {
+        if (peerId) props.store.sendSignal(peerId, "stop_typing");
+      }, 3000);
     }
   };
 
@@ -238,12 +294,62 @@ export default function TransferPanel(props: Props) {
 
   // ─── Render helpers ───────────────────────────────────────────────
 
+  /** Render text with inline link previews */
+  const renderTextContent = (text: string) => {
+    const urls = extractUrls(text);
+    if (urls.length === 0) {
+      return <div class="blnk-chat-bubble-text">{text}</div>;
+    }
+
+    // Split text around URLs and render inline
+    const parts: (string | { url: string })[] = [];
+    let remaining = text;
+    for (const url of urls) {
+      const idx = remaining.indexOf(url);
+      if (idx > 0) parts.push(remaining.slice(0, idx));
+      parts.push({ url });
+      remaining = remaining.slice(idx + url.length);
+    }
+    if (remaining) parts.push(remaining);
+
+    return (
+      <>
+        <div class="blnk-chat-bubble-text">
+          {parts.map((p) =>
+            typeof p === "string" ? (
+              p
+            ) : (
+              <a
+                class="blnk-chat-link"
+                href={p.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {p.url}
+              </a>
+            )
+          )}
+        </div>
+        {/* Link preview cards */}
+        {urls.slice(0, 2).map((url) => (
+          <div class="blnk-link-preview">
+            <span class="blnk-link-preview-icon">{"\uD83D\uDD17"}</span>
+            <div class="blnk-link-preview-content">
+              <span class="blnk-link-preview-domain">{getDomain(url)}</span>
+              <span class="blnk-link-preview-url">{url.length > 60 ? url.slice(0, 60) + "..." : url}</span>
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  };
+
   const renderHistoryItem = (entry: TransferHistoryEntry) => {
     const isSent = entry.direction === "send";
     const isText = entry.transfer_type === "text" || entry.transfer_type === "clipboard";
     const isClipboard = entry.transfer_type === "clipboard";
     const isFailed = entry.status === "failed";
-    const isCancelled = entry.status === "cancelled";
+    const isDelivered = isSent && props.store.deliveredMessages().has(entry.id);
 
     if (isText) {
       return (
@@ -265,19 +371,27 @@ export default function TransferPanel(props: Props) {
             <Show when={isClipboard}>
               <span class="blnk-clipboard-badge">{"\uD83D\uDCCB"} Clipboard</span>
             </Show>
-            <div class="blnk-chat-bubble-text">{entry.text_content || ""}</div>
+            {renderTextContent(entry.text_content || "")}
             <Show when={isFailed}>
               <span class="blnk-chat-status-badge blnk-chat-status-failed">
                 Failed
               </span>
             </Show>
           </div>
-          <span class="blnk-chat-time">{formatChatTime(entry.timestamp)}</span>
+          <div class="blnk-chat-time-row">
+            <span class="blnk-chat-time">{formatChatTime(entry.timestamp)}</span>
+            <Show when={isSent}>
+              <span class="blnk-chat-receipt" classList={{ "blnk-receipt-delivered": isDelivered }}>
+                {isDelivered ? "\u2713\u2713" : "\u2713"}
+              </span>
+            </Show>
+          </div>
         </div>
       );
     }
 
     // File transfer
+    const isImage = isImageFile(entry.filename);
     return (
       <div
         class="blnk-chat-row"
@@ -291,12 +405,27 @@ export default function TransferPanel(props: Props) {
           classList={{
             "blnk-chat-file-sent": isSent,
             "blnk-chat-file-received": !isSent,
-            "blnk-chat-file-failed": isFailed || isCancelled,
+            "blnk-chat-file-failed": isFailed || entry.status === "cancelled",
           }}
         >
+          {/* Image preview for received images with save_path */}
+          <Show when={isImage && entry.save_path && !isFailed}>
+            <div class="blnk-chat-image-preview">
+              <img
+                src={convertFileSrc(entry.save_path!)}
+                alt={entry.filename || "Image"}
+                class="blnk-chat-image"
+                loading="lazy"
+                onError={(e) => {
+                  // Hide broken image, show file card instead
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
+          </Show>
           <div class="blnk-chat-file-header">
             <span class="blnk-chat-file-icon">
-              {isSent ? "\u2191" : "\u2193"}
+              {isImage ? "\uD83D\uDDBC\uFE0F" : isSent ? "\u2191" : "\u2193"}
             </span>
             <span class="blnk-chat-file-name">
               {entry.filename || "File"}
@@ -316,7 +445,14 @@ export default function TransferPanel(props: Props) {
             </div>
           </Show>
         </div>
-        <span class="blnk-chat-time">{formatChatTime(entry.timestamp)}</span>
+        <div class="blnk-chat-time-row">
+          <span class="blnk-chat-time">{formatChatTime(entry.timestamp)}</span>
+          <Show when={isSent}>
+            <span class="blnk-chat-receipt" classList={{ "blnk-receipt-delivered": isDelivered }}>
+              {isDelivered ? "\u2713\u2713" : "\u2713"}
+            </span>
+          </Show>
+        </div>
       </div>
     );
   };
@@ -461,6 +597,17 @@ export default function TransferPanel(props: Props) {
             </For>
           </Show>
         </Show>
+
+        {/* Typing indicator */}
+        <Show when={isSelectedPeerTyping()}>
+          <div class="blnk-chat-row blnk-chat-row-received">
+            <div class="blnk-typing-indicator">
+              <span class="blnk-typing-dot" />
+              <span class="blnk-typing-dot" />
+              <span class="blnk-typing-dot" />
+            </div>
+          </div>
+        </Show>
       </div>
 
       {/* Input bar */}
@@ -503,7 +650,7 @@ export default function TransferPanel(props: Props) {
             class="blnk-chat-input"
             placeholder="Type a message..."
             value={textInput()}
-            onInput={(e) => setTextInput(e.currentTarget.value)}
+            onInput={handleTextInput}
             onKeyDown={handleKeyDown}
             disabled={props.store.loading()}
           />
