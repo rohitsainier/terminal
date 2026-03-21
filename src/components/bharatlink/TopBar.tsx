@@ -1,3 +1,4 @@
+import { Show } from "solid-js";
 import type { BharatLinkStore } from "./types";
 
 interface Props {
@@ -6,6 +7,8 @@ interface Props {
 }
 
 export default function TopBar(props: Props) {
+  const deviceName = () => props.store.settings()?.device_name || "";
+
   return (
     <div class="blnk-topbar">
       <div class="blnk-topbar-left">
@@ -18,6 +21,9 @@ export default function TopBar(props: Props) {
         <span class="blnk-status-label">
           {props.store.isRunning() ? "ONLINE" : "OFFLINE"}
         </span>
+        <Show when={deviceName()}>
+          <span class="blnk-device-name">{deviceName()}</span>
+        </Show>
       </div>
 
       <div class="blnk-topbar-center">

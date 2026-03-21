@@ -59,7 +59,12 @@ export function useBharatLinkData(): BharatLinkStore {
 
     unlisteners.push(
       await listen<string>("bharatlink-peer-lost", (e) => {
-        setPeers((prev) => prev.filter((p) => p.node_id !== e.payload));
+        // Mark peer as offline instead of removing (so trusted peers stay visible)
+        setPeers((prev) =>
+          prev.map((p) =>
+            p.node_id === e.payload ? { ...p, is_connected: false } : p
+          )
+        );
       })
     );
 
@@ -196,10 +201,37 @@ export function useBharatLinkData(): BharatLinkStore {
     }
   };
 
+  const sendFiles = async (peerId: string, filePaths: string[]) => {
+    setError(null);
+    try {
+      await invoke("bharatlink_send_files", { peerId, filePaths });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const sendText = async (peerId: string, text: string) => {
     setError(null);
     try {
       await invoke("bharatlink_send_text", { peerId, text });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const sendClipboard = async (peerId: string, text: string) => {
+    setError(null);
+    try {
+      await invoke("bharatlink_send_clipboard", { peerId, clipboardText: text });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const captureAndSendScreenshot = async (peerId: string) => {
+    setError(null);
+    try {
+      await invoke("bharatlink_capture_screenshot", { peerId });
     } catch (e) {
       setError(String(e));
     }
@@ -307,7 +339,10 @@ export function useBharatLinkData(): BharatLinkStore {
     trustPeer,
     untrustPeer,
     sendFile,
+    sendFiles,
     sendText,
+    sendClipboard,
+    captureAndSendScreenshot,
     acceptTransfer,
     rejectTransfer,
     cancelTransfer,

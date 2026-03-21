@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { BharatLinkStore } from "./types";
+import QRModal from "./QRModal";
 
 interface Props {
   store: BharatLinkStore;
@@ -8,10 +9,35 @@ interface Props {
 
 export default function InfoPanel(props: Props) {
   const [showAbout, setShowAbout] = createSignal(true);
+  const [showQR, setShowQR] = createSignal(false);
+  const [editingName, setEditingName] = createSignal(false);
+  const [nameInput, setNameInput] = createSignal("");
 
   const copyNodeId = () => {
     const id = props.store.nodeInfo()?.node_id;
     if (id) navigator.clipboard.writeText(id);
+  };
+
+  const startEditName = () => {
+    setNameInput(props.store.settings()?.device_name || "");
+    setEditingName(true);
+  };
+
+  const saveName = () => {
+    const current = props.store.settings();
+    if (!current) return;
+    const updated = { ...current, device_name: nameInput().trim() || current.device_name };
+    props.store.updateSettings(updated);
+    setEditingName(false);
+  };
+
+  const handleNameKey = (e: KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveName();
+    } else if (e.key === "Escape") {
+      setEditingName(false);
+    }
   };
 
   const toggleSetting = (key: "auto_accept_text" | "accept_from_trusted_only" | "auto_accept_from_trusted") => {
@@ -117,6 +143,41 @@ export default function InfoPanel(props: Props) {
                 <span class="blnk-about-feat-desc">Save peers with nicknames for quick access</span>
               </div>
             </div>
+            <div class="blnk-about-feature">
+              <span class="blnk-about-feat-icon">&#x1F4CB;</span>
+              <div>
+                <span class="blnk-about-feat-title">Clipboard Sync</span>
+                <span class="blnk-about-feat-desc">Share clipboard content instantly with peers</span>
+              </div>
+            </div>
+            <div class="blnk-about-feature">
+              <span class="blnk-about-feat-icon">&#x1F4F7;</span>
+              <div>
+                <span class="blnk-about-feat-title">Screenshot Share</span>
+                <span class="blnk-about-feat-desc">Capture and send screenshots in one click</span>
+              </div>
+            </div>
+            <div class="blnk-about-feature">
+              <span class="blnk-about-feat-icon">&#x1F4C1;</span>
+              <div>
+                <span class="blnk-about-feat-title">Multi-file & Folders</span>
+                <span class="blnk-about-feat-desc">Send multiple files or entire folders at once</span>
+              </div>
+            </div>
+            <div class="blnk-about-feature">
+              <span class="blnk-about-feat-icon">&#x1F4F2;</span>
+              <div>
+                <span class="blnk-about-feat-title">QR Code Pairing</span>
+                <span class="blnk-about-feat-desc">Share your ID via QR code for easy peer setup</span>
+              </div>
+            </div>
+            <div class="blnk-about-feature">
+              <span class="blnk-about-feat-icon">&#x1F4E5;</span>
+              <div>
+                <span class="blnk-about-feat-title">Drag & Drop</span>
+                <span class="blnk-about-feat-desc">Drop files onto the chat to send instantly</span>
+              </div>
+            </div>
           </div>
 
           <div class="blnk-about-section-label">KEYBOARD SHORTCUTS</div>
@@ -181,7 +242,22 @@ export default function InfoPanel(props: Props) {
                   {info().node_id_short}
                   <span class="blnk-copy-hint">click to copy full ID</span>
                 </div>
+                <button
+                  class="blnk-btn blnk-btn-full blnk-btn-qr"
+                  onClick={() => setShowQR(true)}
+                >
+                  SHOW QR CODE
+                </button>
               </div>
+
+              {/* QR Modal */}
+              <Show when={showQR()}>
+                <QRModal
+                  nodeId={info().node_id}
+                  deviceName={props.store.settings()?.device_name || info().node_id_short}
+                  onClose={() => setShowQR(false)}
+                />
+              </Show>
 
               {/* Relay */}
               <Show when={info().relay_url}>
@@ -246,6 +322,23 @@ export default function InfoPanel(props: Props) {
             <div class="blnk-info-section">
               <div class="blnk-info-label">SETTINGS</div>
               <div class="blnk-settings-list">
+                {/* Device name */}
+                <div class="blnk-setting-row blnk-setting-toggle" onClick={() => !editingName() && startEditName()}>
+                  <span>Device name</span>
+                  <Show when={!editingName()} fallback={
+                    <input
+                      class="blnk-input blnk-name-input"
+                      value={nameInput()}
+                      onInput={(e) => setNameInput(e.currentTarget.value)}
+                      onKeyDown={handleNameKey}
+                      onBlur={saveName}
+                      autofocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  }>
+                    <span class="blnk-setting-dir">{s().device_name || "Not set"}</span>
+                  </Show>
+                </div>
                 <div
                   class="blnk-setting-row blnk-setting-toggle"
                   onClick={() => toggleSetting("auto_accept_text")}

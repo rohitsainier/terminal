@@ -26,7 +26,7 @@ export interface PeerInfo {
 
 // ─── Transfer ────────────────────────────────────────────────────────────
 
-export type TransferType = "file" | "text";
+export type TransferType = "file" | "text" | "clipboard";
 export type TransferStatus =
   | "pending"
   | "in_progress"
@@ -125,7 +125,10 @@ export interface BharatLinkStore {
   trustPeer: (nodeId: string, nickname: string) => Promise<void>;
   untrustPeer: (nodeId: string) => Promise<void>;
   sendFile: (peerId: string, filePath: string) => Promise<void>;
+  sendFiles: (peerId: string, filePaths: string[]) => Promise<void>;
   sendText: (peerId: string, text: string) => Promise<void>;
+  sendClipboard: (peerId: string, text: string) => Promise<void>;
+  captureAndSendScreenshot: (peerId: string) => Promise<void>;
   acceptTransfer: (requestId: string) => Promise<void>;
   rejectTransfer: (requestId: string) => Promise<void>;
   cancelTransfer: (transferId: string) => Promise<void>;

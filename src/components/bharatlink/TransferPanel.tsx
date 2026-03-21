@@ -1,5 +1,6 @@
-import { createSignal, createMemo, createEffect, For, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BharatLinkStore,
   TransferHistoryEntry,
@@ -19,8 +20,50 @@ interface Props {
 
 export default function TransferPanel(props: Props) {
   const [textInput, setTextInput] = createSignal("");
+  const [isDragging, setIsDragging] = createSignal(false);
   let messagesRef: HTMLDivElement | undefined;
   let wasNearBottom = true;
+  let dragCounter = 0;
+
+  // ─── Tauri drag-drop listener for native file paths ─────────────
+  let unlistenDrop: UnlistenFn | undefined;
+
+  onMount(async () => {
+    unlistenDrop = await listen<{ paths: string[] }>("tauri://drag-drop", (e) => {
+      setIsDragging(false);
+      dragCounter = 0;
+      const peerId = props.store.selectedPeer();
+      if (!peerId || !e.payload.paths?.length) return;
+      if (e.payload.paths.length === 1) {
+        props.store.sendFile(peerId, e.payload.paths[0]);
+      } else {
+        props.store.sendFiles(peerId, e.payload.paths);
+      }
+    });
+  });
+
+  onCleanup(() => {
+    unlistenDrop?.();
+  });
+
+  const handleDragEnter = (e: DragEvent) => {
+    e.preventDefault();
+    dragCounter++;
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) {
+      setIsDragging(false);
+      dragCounter = 0;
+    }
+  };
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+  };
 
   // ─── Selected peer name ───────────────────────────────────────────
   const selectedPeerName = () => {
@@ -83,11 +126,58 @@ export default function TransferPanel(props: Props) {
     const peerId = props.store.selectedPeer();
     if (!peerId) return;
     const selected = await open({
-      multiple: false,
+      multiple: true,
       directory: false,
     });
     if (selected) {
-      await props.store.sendFile(peerId, selected as string);
+      if (Array.isArray(selected)) {
+        if (selected.length === 1) {
+          await props.store.sendFile(peerId, selected[0]);
+        } else if (selected.length > 1) {
+          await props.store.sendFiles(peerId, selected);
+        }
+      } else {
+        await props.store.sendFile(peerId, selected as string);
+      }
+    }
+  };
+
+  const handleSendFolder = async () => {
+    const peerId = props.store.selectedPeer();
+    if (!peerId) return;
+    const selected = await open({
+      multiple: false,
+      directory: true,
+    });
+    if (selected) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const files = await invoke<string[]>("bharatlink_list_dir_files", { dirPath: selected as string });
+        if (files.length > 0) {
+          await props.store.sendFiles(peerId, files);
+        }
+      } catch (e) {
+        console.error("Failed to list dir files:", e);
+      }
+    }
+  };
+
+  const handleSendScreenshot = async () => {
+    const peerId = props.store.selectedPeer();
+    if (!peerId) return;
+    await props.store.captureAndSendScreenshot(peerId);
+  };
+
+  const handleSendClipboard = async () => {
+    const peerId = props.store.selectedPeer();
+    if (!peerId) return;
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        await props.store.sendClipboard(peerId, text);
+      }
+    } catch (e) {
+      console.error("Clipboard read failed:", e);
     }
   };
 
@@ -140,7 +230,8 @@ export default function TransferPanel(props: Props) {
 
   const renderHistoryItem = (entry: TransferHistoryEntry) => {
     const isSent = entry.direction === "send";
-    const isText = entry.transfer_type === "text";
+    const isText = entry.transfer_type === "text" || entry.transfer_type === "clipboard";
+    const isClipboard = entry.transfer_type === "clipboard";
     const isFailed = entry.status === "failed";
     const isCancelled = entry.status === "cancelled";
 
@@ -158,8 +249,12 @@ export default function TransferPanel(props: Props) {
             classList={{
               "blnk-chat-sent": isSent,
               "blnk-chat-received": !isSent,
+              "blnk-chat-clipboard": isClipboard,
             }}
           >
+            <Show when={isClipboard}>
+              <span class="blnk-clipboard-badge">{"\uD83D\uDCCB"} Clipboard</span>
+            </Show>
             <div class="blnk-chat-bubble-text">{entry.text_content || ""}</div>
             <Show when={isFailed}>
               <span class="blnk-chat-status-badge blnk-chat-status-failed">
@@ -304,7 +399,22 @@ export default function TransferPanel(props: Props) {
 
   // ─── Component ────────────────────────────────────────────────────
   return (
-    <div class="blnk-panel blnk-chat-panel">
+    <div
+      class="blnk-panel blnk-chat-panel"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+    >
+      {/* Drag & Drop overlay */}
+      <Show when={isDragging() && props.store.selectedPeer()}>
+        <div class="blnk-drop-zone">
+          <div class="blnk-drop-zone-content">
+            <span class="blnk-drop-zone-icon">{"\uD83D\uDCC1"}</span>
+            <span class="blnk-drop-zone-text">Drop files to send</span>
+          </div>
+        </div>
+      </Show>
+
       {/* Header */}
       <div class="blnk-panel-header">
         <span class="blnk-panel-icon">{"\uD83D\uDCAC"}</span>
@@ -346,9 +456,33 @@ export default function TransferPanel(props: Props) {
             class="blnk-chat-attach-btn"
             onClick={handleSendFile}
             disabled={props.store.loading()}
-            title="Attach file"
+            title="Attach files"
           >
             {"\uD83D\uDCCE"}
+          </button>
+          <button
+            class="blnk-chat-attach-btn"
+            onClick={handleSendFolder}
+            disabled={props.store.loading()}
+            title="Send folder"
+          >
+            {"\uD83D\uDCC1"}
+          </button>
+          <button
+            class="blnk-chat-attach-btn"
+            onClick={handleSendScreenshot}
+            disabled={props.store.loading()}
+            title="Send screenshot"
+          >
+            {"\uD83D\uDCF7"}
+          </button>
+          <button
+            class="blnk-chat-attach-btn"
+            onClick={handleSendClipboard}
+            disabled={props.store.loading()}
+            title="Send clipboard"
+          >
+            {"\uD83D\uDCCB"}
           </button>
           <input
             type="text"

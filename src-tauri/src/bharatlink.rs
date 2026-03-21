@@ -243,15 +243,16 @@ impl ProtocolHandler for TextProtocolHandler {
             }
         }
 
-        let text = String::from_utf8_lossy(&data).to_string();
+        let raw_text = String::from_utf8_lossy(&data).to_string();
         let trusted = self.shared.trusted_peers.lock().await;
         let nickname = trusted.get(&remote_str).cloned();
         drop(trusted);
 
-        let text_preview = if text.len() > 200 {
-            format!("{}...", &text[..200])
+        // Detect clipboard content (prefixed with [CLIPBOARD])
+        let (text, transfer_type) = if raw_text.starts_with("[CLIPBOARD]") {
+            (raw_text.trim_start_matches("[CLIPBOARD]").to_string(), "clipboard".to_string())
         } else {
-            text.clone()
+            (raw_text, "text".to_string())
         };
 
         let entry = TransferHistoryEntry {
@@ -259,10 +260,10 @@ impl ProtocolHandler for TextProtocolHandler {
             direction: "receive".to_string(),
             peer_id: remote_str,
             peer_nickname: nickname,
-            transfer_type: "text".to_string(),
+            transfer_type: transfer_type.clone(),
             filename: None,
             file_size: Some(data.len() as u64),
-            text_content: Some(text_preview),
+            text_content: Some(text.clone()),
             status: "complete".to_string(),
             timestamp: epoch_ms(),
             duration_ms: Some(0),
@@ -435,6 +436,14 @@ impl BharatLinkManager {
             app_handle: None,
         };
         mgr.load_state();
+
+        // Auto-generate device name from hostname if not set
+        if mgr.settings.device_name.is_none() {
+            let hostname = sysinfo::System::host_name().unwrap_or_else(|| "Unknown".to_string());
+            mgr.settings.device_name = Some(hostname);
+            let _ = mgr.save_state();
+        }
+
         mgr
     }
 
@@ -624,9 +633,11 @@ impl BharatLinkManager {
     ) {
         // Track peer state: node_id -> (last_seen_ms, was_connected)
         let mut peer_state: HashMap<String, (u64, bool)> = HashMap::new();
+        let mut cycle_count: u32 = 0;
 
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            cycle_count += 1;
 
             // Check if endpoint is still alive
             if endpoint.is_closed() {
@@ -692,8 +703,11 @@ impl BharatLinkManager {
                 };
                 peer_state.insert(peer_id.clone(), (last_seen, is_connected));
 
-                // Emit on first discovery or status change
-                if is_new || status_changed {
+                // Re-emit all peer statuses every 3rd cycle (~15s) as heartbeat
+                let is_heartbeat = cycle_count % 3 == 0;
+
+                // Emit on first discovery, status change, or heartbeat
+                if is_new || status_changed || is_heartbeat {
                     let peer_info = PeerInfo {
                         node_id_short: short_id(peer_id),
                         node_id: peer_id.clone(),
@@ -704,14 +718,7 @@ impl BharatLinkManager {
                         is_trusted: true,
                     };
 
-                    if is_connected || is_new {
-                        let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
-                    }
-
-                    // If peer went offline, emit peer-lost so UI can update
-                    if status_changed && !is_connected {
-                        let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
-                    }
+                    let _ = app_handle.emit("bharatlink-peer-discovered", &peer_info);
                 }
             }
         }
@@ -1035,12 +1042,6 @@ impl BharatLinkManager {
         drop(send);
         drop(conn);
 
-        let text_preview = if text.len() > 100 {
-            format!("{}...", &text[..100])
-        } else {
-            text.clone()
-        };
-
         let nickname = {
             let trusted = self.trusted_peers_shared.lock().await;
             trusted.get(&peer_id).cloned()
@@ -1054,7 +1055,7 @@ impl BharatLinkManager {
             transfer_type: "text".to_string(),
             filename: None,
             file_size: Some(text_bytes.len() as u64),
-            text_content: Some(text_preview),
+            text_content: Some(text.clone()),
             status: "complete".to_string(),
             timestamp: epoch_ms(),
             duration_ms: None,
@@ -1174,6 +1175,140 @@ impl BharatLinkManager {
         }
         self.settings = settings;
         self.save_state()
+    }
+
+    // ── Multi-file transfer ─────────────────────────────────────────────
+
+    pub async fn send_files(
+        &mut self,
+        peer_id: String,
+        file_paths: Vec<String>,
+    ) -> Result<String, String> {
+        let batch_id = uuid::Uuid::new_v4().to_string();
+        let total = file_paths.len();
+
+        for (i, file_path) in file_paths.iter().enumerate() {
+            eprintln!(
+                "[BharatLink] Sending file {}/{} from batch {}: {}",
+                i + 1, total, batch_id, file_path
+            );
+            match self.send_file(peer_id.clone(), file_path.clone()).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("[BharatLink] Batch file send error: {}", e);
+                    // Continue with remaining files instead of aborting
+                }
+            }
+        }
+
+        Ok(batch_id)
+    }
+
+    pub fn list_dir_files(&self, dir_path: String) -> Result<Vec<String>, String> {
+        let path = PathBuf::from(&dir_path);
+        if !path.is_dir() {
+            return Err(format!("Not a directory: {}", dir_path));
+        }
+
+        let mut files = Vec::new();
+        Self::collect_files(&path, &mut files)
+            .map_err(|e| format!("Failed to list files: {}", e))?;
+        Ok(files)
+    }
+
+    fn collect_files(dir: &std::path::Path, files: &mut Vec<String>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                Self::collect_files(&path, files)?;
+            } else if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    // Skip hidden files
+                    if !name.to_string_lossy().starts_with('.') {
+                        files.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // ── Screenshot capture ──────────────────────────────────────────────
+
+    pub async fn capture_and_send_screenshot(&mut self, peer_id: String) -> Result<String, String> {
+        let screenshot_path = std::env::temp_dir()
+            .join(format!("bharatlink_screenshot_{}.png", uuid::Uuid::new_v4()));
+
+        #[cfg(target_os = "macos")]
+        {
+            let output = tokio::process::Command::new("screencapture")
+                .args(["-x", &screenshot_path.to_string_lossy()])
+                .output()
+                .await
+                .map_err(|e| format!("Screenshot capture failed: {}", e))?;
+
+            if !output.status.success() {
+                return Err("Screenshot capture was cancelled or failed".to_string());
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let ps_script = format!(
+                r#"
+                Add-Type -AssemblyName System.Windows.Forms
+                $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+                $bitmap = New-Object System.Drawing.Bitmap($screen.Bounds.Width, $screen.Bounds.Height)
+                $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                $graphics.CopyFromScreen($screen.Bounds.Location, [System.Drawing.Point]::Empty, $screen.Bounds.Size)
+                $bitmap.Save('{}')
+                $graphics.Dispose()
+                $bitmap.Dispose()
+                "#,
+                screenshot_path.to_string_lossy().replace('\\', "\\\\")
+            );
+
+            let output = tokio::process::Command::new("powershell")
+                .args(["-Command", &ps_script])
+                .output()
+                .await
+                .map_err(|e| format!("Screenshot capture failed: {}", e))?;
+
+            if !output.status.success() {
+                return Err("Screenshot capture failed".to_string());
+            }
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            return Err("Screenshot not supported on this platform".to_string());
+        }
+
+        if !screenshot_path.exists() {
+            return Err("Screenshot file was not created".to_string());
+        }
+
+        let result = self
+            .send_file(peer_id, screenshot_path.to_string_lossy().to_string())
+            .await;
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&screenshot_path);
+
+        result
+    }
+
+    // ── Clipboard operations ────────────────────────────────────────────
+
+    pub async fn send_clipboard_text(
+        &mut self,
+        peer_id: String,
+        clipboard_text: String,
+    ) -> Result<String, String> {
+        // Prefix with [CLIPBOARD] marker so receiver knows it's clipboard content
+        let text = format!("[CLIPBOARD]{}", clipboard_text);
+        self.send_text(peer_id, text).await
     }
 }
 
@@ -1336,4 +1471,44 @@ pub async fn bharatlink_update_settings(
 ) -> Result<(), String> {
     let mut mgr = state.bharatlink_manager.lock().await;
     mgr.update_settings(settings).await
+}
+
+// ═══ New commands — Multi-file, Screenshot, Clipboard ═══
+
+#[tauri::command]
+pub async fn bharatlink_send_files(
+    state: tauri::State<'_, crate::commands::AppState>,
+    peer_id: String,
+    file_paths: Vec<String>,
+) -> Result<String, String> {
+    let mut mgr = state.bharatlink_manager.lock().await;
+    mgr.send_files(peer_id, file_paths).await
+}
+
+#[tauri::command]
+pub async fn bharatlink_list_dir_files(
+    state: tauri::State<'_, crate::commands::AppState>,
+    dir_path: String,
+) -> Result<Vec<String>, String> {
+    let mgr = state.bharatlink_manager.lock().await;
+    mgr.list_dir_files(dir_path)
+}
+
+#[tauri::command]
+pub async fn bharatlink_capture_screenshot(
+    state: tauri::State<'_, crate::commands::AppState>,
+    peer_id: String,
+) -> Result<String, String> {
+    let mut mgr = state.bharatlink_manager.lock().await;
+    mgr.capture_and_send_screenshot(peer_id).await
+}
+
+#[tauri::command]
+pub async fn bharatlink_send_clipboard(
+    state: tauri::State<'_, crate::commands::AppState>,
+    peer_id: String,
+    clipboard_text: String,
+) -> Result<String, String> {
+    let mut mgr = state.bharatlink_manager.lock().await;
+    mgr.send_clipboard_text(peer_id, clipboard_text).await
 }

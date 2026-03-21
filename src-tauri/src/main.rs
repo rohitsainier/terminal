@@ -175,6 +175,10 @@ fn main() {
             bharatlink::bharatlink_clear_history,
             bharatlink::bharatlink_get_settings,
             bharatlink::bharatlink_update_settings,
+            bharatlink::bharatlink_send_files,
+            bharatlink::bharatlink_list_dir_files,
+            bharatlink::bharatlink_capture_screenshot,
+            bharatlink::bharatlink_send_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

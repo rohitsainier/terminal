@@ -471,6 +471,7 @@
 .blnk-chat-panel {
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .blnk-chat-peer-label {
@@ -1099,6 +1100,188 @@
   text-transform: uppercase;
   opacity: 0.3;
   text-align: center;
+}
+
+/* ─── Device name in topbar ─── */
+.blnk-device-name {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.7;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+}
+
+.blnk-name-input {
+  max-width: 100px;
+  font-size: 9px;
+  padding: 2px 6px;
+}
+
+/* ─── QR Modal ─── */
+.blnk-qr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: blnk-fadeIn 0.2s ease-out;
+}
+
+.blnk-qr-modal {
+  background: var(--bg);
+  border: 1px solid var(--accent-dim);
+  border-radius: 12px;
+  width: 320px;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5), 0 0 20px var(--accent-dim);
+  overflow: hidden;
+}
+
+.blnk-qr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.blnk-qr-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+
+.blnk-qr-close {
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s, opacity 0.15s;
+}
+
+.blnk-qr-close:hover {
+  color: #ef4444;
+  opacity: 1;
+}
+
+.blnk-qr-body {
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.blnk-qr-device-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+  letter-spacing: 1px;
+}
+
+.blnk-qr-image-wrap {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.blnk-qr-image {
+  width: 200px;
+  height: 200px;
+  image-rendering: pixelated;
+}
+
+.blnk-qr-loading {
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  font-size: 11px;
+}
+
+.blnk-qr-hint {
+  font-size: 9px;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.blnk-qr-id {
+  font-size: 9px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  word-break: break-all;
+  text-align: center;
+  transition: border-color 0.15s;
+}
+
+.blnk-qr-id:hover {
+  border-color: var(--accent);
+}
+
+.blnk-btn-qr {
+  margin-top: 6px;
+  font-size: 9px;
+}
+
+/* ─── Drag & Drop zone ─── */
+.blnk-drop-zone {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: blnk-fadeIn 0.15s ease-out;
+  pointer-events: none;
+}
+
+.blnk-drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.blnk-drop-zone-icon {
+  font-size: 40px;
+  opacity: 0.8;
+}
+
+.blnk-drop-zone-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+/* ─── Clipboard badge ─── */
+.blnk-clipboard-badge {
+  font-size: 8px;
+  opacity: 0.6;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.blnk-chat-clipboard {
+  border: 1px dashed var(--accent-dim);
 }
 
 /* ─── Error ─── */
