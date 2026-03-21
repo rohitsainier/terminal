@@ -10,6 +10,9 @@ on:
 permissions:
   contents: write
 
+env:
+  HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+
 jobs:
   build:
     strategy:
@@ -52,7 +55,7 @@ jobs:
 
       # ─── macOS Code Signing Setup (only when secrets are configured) ────
       - name: Import Apple certificate
-        if: startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != ''
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -81,7 +84,7 @@ jobs:
 
       # ─── Build WITHOUT code signing (default) ────
       - name: Build Tauri app (unsigned)
-        if: "!(startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != '')"
+        if: "!(startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true')"
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -90,7 +93,7 @@ jobs:
 
       # ─── Build WITH code signing (only when secrets are configured) ────
       - name: Build Tauri app (signed)
-        if: startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != ''
+        if: startsWith(matrix.platform, 'macos') && env.HAS_APPLE_CERT == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
