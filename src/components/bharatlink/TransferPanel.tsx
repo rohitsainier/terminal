@@ -94,12 +94,9 @@ export default function TransferPanel(props: Props) {
       items.push({ kind: "request", entry, ts: entry.timestamp });
     }
 
-    // Active transfers (no peer_id available — show all)
-    for (const entry of props.store.activeTransfers()) {
-      items.push({ kind: "active", entry, ts: Date.now() });
-    }
-
     // Sort ascending (oldest first, newest at bottom)
+    // NOTE: Active transfers are rendered separately below the list
+    // to avoid full list re-renders on every progress event
     items.sort((a, b) => a.ts - b.ts);
     return items;
   });
@@ -111,14 +108,27 @@ export default function TransferPanel(props: Props) {
     return scrollHeight - scrollTop - clientHeight < 100;
   };
 
+  // Only auto-scroll when history/requests change (not on progress ticks)
   createEffect(() => {
-    chatItems(); // track dependency
+    chatItems(); // track dependency — does NOT include active transfers
     wasNearBottom = isNearBottom();
     setTimeout(() => {
       if (messagesRef && wasNearBottom) {
         messagesRef.scrollTop = messagesRef.scrollHeight;
       }
     }, 0);
+  });
+
+  // Scroll once when a new active transfer appears (not on every tick)
+  let prevActiveCount = 0;
+  createEffect(() => {
+    const count = props.store.activeTransfers().length;
+    if (count > prevActiveCount && messagesRef) {
+      setTimeout(() => {
+        messagesRef!.scrollTop = messagesRef!.scrollHeight;
+      }, 0);
+    }
+    prevActiveCount = count;
   });
 
   // ─── Actions ──────────────────────────────────────────────────────
@@ -348,7 +358,7 @@ export default function TransferPanel(props: Props) {
     const isSent = t.direction === "send";
     return (
       <div
-        class="blnk-chat-row"
+        class="blnk-chat-row blnk-chat-row-active"
         classList={{
           "blnk-chat-row-sent": isSent,
           "blnk-chat-row-received": !isSent,
@@ -437,7 +447,7 @@ export default function TransferPanel(props: Props) {
           }
         >
           <Show
-            when={chatItems().length > 0}
+            when={chatItems().length > 0 || props.store.activeTransfers().length > 0}
             fallback={
               <div class="blnk-chat-empty">
                 No messages yet. Say hello!
@@ -445,6 +455,10 @@ export default function TransferPanel(props: Props) {
             }
           >
             <For each={chatItems()}>{(item) => renderChatItem(item)}</For>
+            {/* Active transfers rendered separately to avoid full list re-render on progress ticks */}
+            <For each={props.store.activeTransfers()}>
+              {(t) => renderActiveTransfer(t)}
+            </For>
           </Show>
         </Show>
       </div>

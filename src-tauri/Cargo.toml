@@ -34,6 +34,7 @@ pbkdf2 = { version = "0.12", features = ["hmac"] }
 iroh = { version = "0.95", features = ["discovery-local-network"] }
 iroh-blobs = { version = "0.97", features = ["fs-store"] }
 rand = "0.9"
+futures-lite = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

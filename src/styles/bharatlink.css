@@ -520,6 +520,11 @@
   animation: blnk-chatFadeIn 0.2s ease-out;
 }
 
+/* Disable fade-in on active transfer rows — progress updates re-render these frequently */
+.blnk-chat-row.blnk-chat-row-active {
+  animation: none;
+}
+
 @keyframes blnk-chatFadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
