@@ -156,6 +156,52 @@ body {
   gap: 12px;
 }
 
+/* ─── BharatLink Status Indicator ──────── */
+
+.status-bharatlink {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.status-bharatlink:hover {
+  background: var(--accent-dim);
+}
+
+.status-bharatlink-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #555;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.status-bharatlink-dot-active {
+  background: #00e676;
+  box-shadow: 0 0 6px #00e676aa;
+}
+
+.status-bharatlink-label {
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.status-bharatlink-peers {
+  font-size: 10px;
+  background: var(--accent-dim);
+  padding: 0 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ─── AI Bar ──────────────────────────── */
 
 .ai-overlay {

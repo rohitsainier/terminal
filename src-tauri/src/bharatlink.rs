@@ -999,6 +999,19 @@ impl BharatLinkManager {
         }
         self.store = None;
         self.save_state()?;
+
+        // Emit stopped status so the status bar updates
+        if let Some(ref app) = self.app_handle {
+            let _ = app.emit("bharatlink-node-status", &NodeInfo {
+                node_id: String::new(),
+                node_id_short: String::new(),
+                is_running: false,
+                relay_url: None,
+                local_addrs: vec![],
+                discovered_peers: 0,
+            });
+        }
+
         Ok(())
     }
 

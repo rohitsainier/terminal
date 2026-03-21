@@ -156,6 +156,27 @@ export function useBharatLinkData(): BharatLinkStore {
 
   setupListeners();
 
+  // ─── Check if node is already running (auto-started on app launch) ──
+  const checkNodeStatus = async () => {
+    try {
+      const info = await invoke<NodeInfo>("bharatlink_node_info");
+      if (info && info.is_running) {
+        setNodeInfo(info);
+        setIsRunning(true);
+        await refreshPeers();
+        await refreshHistory();
+        await getSettings();
+      } else {
+        setIsRunning(false);
+        setNodeInfo(null);
+      }
+    } catch (_) {
+      // Node not running — that's ok
+      setIsRunning(false);
+    }
+  };
+  checkNodeStatus();
+
   onCleanup(() => {
     clearInterval(clockInterval);
     unlisteners.forEach((fn) => fn());

@@ -41,6 +41,8 @@ export default function App() {
   const [showMCPChat, setShowMCPChat] = createSignal(false);
   const [showNetops, setShowNetops] = createSignal(false);
   const [showBharatLink, setShowBharatLink] = createSignal(false);
+  const [blNodeRunning, setBlNodeRunning] = createSignal(false);
+  const [blPeerCount, setBlPeerCount] = createSignal(0);
 
   // ── Theme via hook ──
   const theme = useTheme();
@@ -58,6 +60,39 @@ export default function App() {
     createTab();
     setLoaded(true);
     document.addEventListener("keydown", handleKeyboard);
+
+    // Auto-start BharatLink node in background
+    try {
+      await invoke("bharatlink_start");
+      setBlNodeRunning(true);
+      // Start polling peer count every 10s
+      const pollPeers = async () => {
+        try {
+          const peers = (await invoke("bharatlink_get_peers")) as any[];
+          setBlPeerCount(peers.length);
+        } catch (_) {}
+      };
+      pollPeers();
+      const peerInterval = setInterval(pollPeers, 10000);
+      // Listen for node status events
+      const { listen } = await import("@tauri-apps/api/event");
+      await listen("bharatlink-node-status", (e: any) => {
+        const running = e.payload?.is_running ?? false;
+        setBlNodeRunning(running);
+        if (running && e.payload?.discovered_peers != null) {
+          setBlPeerCount(e.payload.discovered_peers);
+        }
+        if (!running) setBlPeerCount(0);
+      });
+      await listen("bharatlink-peer-discovered", () => {
+        pollPeers();
+      });
+      await listen("bharatlink-peer-lost", () => {
+        pollPeers();
+      });
+    } catch (e) {
+      console.warn("[BharatLink] Auto-start failed:", e);
+    }
   });
 
   onCleanup(() => {
@@ -311,6 +346,12 @@ export default function App() {
         activeTab={tabs().find((t) => t.id === activeTab())}
         theme={theme.currentTheme()?.name || theme.themeName()}
         onShowShortcuts={() => setShowShortcuts((v) => !v)}
+        bharatLinkRunning={blNodeRunning()}
+        bharatLinkPeerCount={blPeerCount()}
+        onBharatLinkClick={() => {
+          closeAllOverlays();
+          setShowBharatLink(true);
+        }}
       />
 
       {/* ── Overlays ── */}

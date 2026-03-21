@@ -1,4 +1,4 @@
-import { createSignal, onMount, onCleanup } from "solid-js";
+import { createSignal, onMount, onCleanup, Show } from "solid-js";
 
 interface Tab {
   id: string;
@@ -10,6 +10,9 @@ interface Props {
   activeTab: Tab | undefined;
   theme: string | undefined;
   onShowShortcuts: () => void;
+  bharatLinkRunning?: boolean;
+  bharatLinkPeerCount?: number;
+  onBharatLinkClick?: () => void;
 }
 
 export default function StatusBar(props: Props) {
@@ -49,6 +52,21 @@ export default function StatusBar(props: Props) {
         <span>zsh</span>
       </div>
       <div class="status-bar-right">
+        <span
+          class="status-bharatlink"
+          onClick={() => props.onBharatLinkClick?.()}
+          title={props.bharatLinkRunning ? `BharatLink Online · ${props.bharatLinkPeerCount || 0} peers · Click to open (⌘⇧B)` : "BharatLink Offline · Click to open (⌘⇧B)"}
+        >
+          <span
+            class="status-bharatlink-dot"
+            classList={{ "status-bharatlink-dot-active": props.bharatLinkRunning }}
+          />
+          <span class="status-bharatlink-label">BharatLink</span>
+          <Show when={props.bharatLinkRunning && (props.bharatLinkPeerCount || 0) > 0}>
+            <span class="status-bharatlink-peers">{props.bharatLinkPeerCount}</span>
+          </Show>
+        </span>
+        <span class="status-separator">│</span>
         <span class="status-theme">🎨 {props.theme || "hacker-green"}</span>
         <span class="status-separator">│</span>
         <span>{os}</span>
