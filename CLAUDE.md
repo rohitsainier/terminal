@@ -8,7 +8,7 @@ Flux Terminal is an AI-powered, GPU-accelerated terminal emulator with cyberpunk
 
 - **Frontend:** SolidJS, TypeScript, Vite, xterm.js
 - **Backend:** Rust (edition 2021), Tauri 2.0, Tokio, portable-pty
-- **P2P:** iroh 0.95 (QUIC + mDNS), iroh-blobs 0.97 (content-addressed transfers)
+- **P2P:** iroh 0.95 (QUIC + mDNS), iroh-blobs 0.97 (content-addressed transfers), futures-lite 2
 - **Package Manager:** npm
 - **Build Tool:** Vite (port 1420)
 
@@ -44,8 +44,8 @@ src/                        # Frontend (SolidJS + TypeScript)
       useBharatLinkData.ts  # Signals, Tauri invoke/listen, event handlers
       TopBar.tsx            # Top bar (logo, node status, start/stop, UTC clock)
       PeerPanel.tsx         # Left panel (discovered + trusted peers, add peer)
-      TransferPanel.tsx     # Center panel (send file/text, incoming requests, active transfers, history)
-      InfoPanel.tsx         # Right panel (node info, stats, settings summary)
+      TransferPanel.tsx     # Center panel (chat-style UI, file/text send, progress, history)
+      InfoPanel.tsx         # Right panel (node info, stats, settings)
       BharatLinkDashboard.tsx # Orchestrator (keyboard, layout)
   hooks/                    # SolidJS hooks (useTheme, useTerminal, useAI)
   effects/                  # Visual effects (CRT, Glow, MatrixRain, Particles, Hologram)
@@ -62,7 +62,7 @@ src-tauri/                  # Rust backend
   src/ssh.rs                 # SSH connections
   src/mcp.rs                 # Model Context Protocol
   src/netops.rs              # NETOPS commands (28 network/security tools)
-  src/bharatlink.rs          # BharatLink P2P engine (iroh QUIC + mDNS, 16 Tauri commands)
+  src/bharatlink.rs          # BharatLink P2P engine (iroh QUIC + mDNS, 20 Tauri commands)
   src/wifi_scan.swift        # CoreWLAN WiFi scanner (embedded via include_str!)
 ```
 
@@ -101,3 +101,28 @@ src-tauri/                  # Rust backend
   - **Security:** traffic anomaly detection, rogue AP detection, system log viewer, threat intelligence, security score, incident tracking, WPA handshake analyzer (with downloadable log reports)
   - **Offensive/Kali-style:** service scan (banner grab), subdomain enum, directory brute force, web fingerprint, WAF detection, web vuln scan (nikto-lite), hash identifier, cipher scan (TLS enum)
 - **BharatLink (P2P Share):** Sovereign peer-to-peer file & text sharing (⌘⇧B). No servers, no accounts — pure QUIC + mDNS. Architecture mirrors NETOPS: `useBharatLinkData` hook → `BharatLinkStore` object → props. Rust backend uses iroh 0.95 for QUIC endpoint with mDNS local discovery, NAT hole punching, and relay fallback. iroh-blobs 0.97 for chunked, BLAKE3-verified, resumable file transfers. Custom ALPNs: `bharatlink/meta/1` (transfer request handshake), `bharatlink/text/1` (direct text sharing + clipboard sync). 20 Tauri commands for node lifecycle, peer management (discover, add, trust/untrust), file/text transfer (send, accept, reject, cancel), multi-file/folder send, screenshot capture & send, clipboard share, history, and settings. Persistent storage in `dirs::config_dir()/flux-terminal/bharatlink/` (secret key, trusted peers, transfer history, settings as JSON). Blob store in `dirs::data_dir()/flux-terminal/bharatlink/blobs/`. All connections encrypted via QUIC + TLS 1.3 (iroh default). Events emitted to frontend: `bharatlink-peer-discovered`, `bharatlink-peer-lost`, `bharatlink-incoming-request`, `bharatlink-transfer-progress`, `bharatlink-transfer-complete`, `bharatlink-node-status`. Features: chat-style UI, drag & drop file send, multi-file/folder transfer, screenshot share, clipboard sync, QR code pairing, device names, peer online/offline status with 15s heartbeat. QR modal uses `qrcode` npm package. Screenshot capture uses `screencapture` (macOS) / PowerShell (Windows).
+
+### BharatLink Technical Details
+
+- **Content-addressed deduplication:** iroh-blobs stores files as BLAKE3 chunks in the blob store. Same content = same hash. Re-sending the same file costs zero bandwidth — the receiver's local blob store already has the chunks.
+- **Streaming progress:** File receive uses `GetProgress::stream()` from iroh-blobs instead of `.complete()`, yielding `GetProgressItem::Progress(bytes_received)` events throttled to ~10/sec. Frontend shows real-time progress bar with bytes/speed/percentage.
+- **Active transfer rendering:** Active transfers are rendered separately from chat history in `TransferPanel.tsx` to avoid full list re-renders on progress ticks. The `blnk-chat-row-active` CSS class disables the `blnk-chatFadeIn` animation to prevent bubble flashing during progress updates.
+- **SharedState pattern:** Protocol handlers (MetaProtocolHandler, TextProtocolHandler) run in separate tasks outside the manager's mutex. Shared state (history, pending_requests, trusted_peers, download_dir) uses `Arc<TokioMutex<>>` for cross-handler access.
+- **QUIC stream lifecycle:** `send.finish()` signals EOF but dropping the connection immediately can lose data. Text sends use a 500ms `tokio::time::sleep` before dropping to ensure QUIC flushes all data.
+- **Storage locations (macOS):**
+  - Config: `~/Library/Application Support/flux-terminal/bharatlink/` (secret.key, settings.json, trusted_peers.json, transfer_history.json)
+  - Blobs: `~/Library/Application Support/flux-terminal/bharatlink/blobs/` (content-addressed chunks)
+- **Key imports:**
+  ```rust
+  use iroh::{
+      discovery::mdns::MdnsDiscovery,
+      endpoint::Connection,
+      protocol::{AcceptError, ProtocolHandler, Router},
+      Endpoint, PublicKey, SecretKey, Watcher,
+  };
+  use iroh_blobs::{api::remote::GetProgressItem, store::fs::FsStore, BlobsProtocol};
+  use futures_lite::StreamExt;
+  ```
+- **Endpoint setup:** Uses `Endpoint::builder()` (N0 preset) which includes PkarrPublisher (publishes to dns.iroh.link), DnsDiscovery (resolves via DNS), and default relay servers — required for cross-network connectivity. `Endpoint::empty_builder()` only works for local-network discovery.
+- **Router pattern:** All protocols (blobs, meta, text) are registered with a single `Router` — no separate accept loops. The router dispatches incoming connections by ALPN to the correct `ProtocolHandler`.
+- **SecretKey generation:** `SecretKey::generate(&mut rand::rng())` (rand 0.9 API)

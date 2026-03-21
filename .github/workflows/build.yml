@@ -50,9 +50,9 @@ jobs:
           workspaces: src-tauri
           cache-on-failure: true
 
-      # ─── macOS Code Signing Setup ────
+      # ─── macOS Code Signing Setup (only when secrets are configured) ────
       - name: Import Apple certificate
-        if: startsWith(matrix.platform, 'macos') && env.APPLE_CERTIFICATE != ''
+        if: startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -79,11 +79,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
+      # ─── Build WITHOUT code signing (default) ────
+      - name: Build Tauri app (unsigned)
+        if: "!(startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != '')"
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing & notarization
+        with:
+          args: --target ${{ matrix.target }}
+
+      # ─── Build WITH code signing (only when secrets are configured) ────
+      - name: Build Tauri app (signed)
+        if: startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != ''
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
