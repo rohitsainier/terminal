@@ -843,6 +843,12 @@ impl BharatLinkManager {
 
     // ── History ─────────────────────────────────────────────────────────
 
+    pub fn get_pending_requests(&self) -> Vec<TransferRequest> {
+        self.pending_requests_shared.try_lock()
+            .map(|p| p.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub fn get_history(&self) -> Vec<TransferHistoryEntry> {
         self.transfer_history_shared.try_lock()
             .map(|h| h.clone())

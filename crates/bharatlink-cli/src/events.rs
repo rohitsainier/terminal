@@ -1,12 +1,16 @@
 use bharatlink_core::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// CLI event sink — renders BharatLink events to the terminal
 pub struct CliEventSink {
     multi: MultiProgress,
     progress_bars: Mutex<HashMap<String, ProgressBar>>,
+    /// Pending incoming requests (shared with interactive loop)
+    pub pending_requests: Arc<Mutex<Vec<TransferRequest>>>,
+    /// Flag: set to true when a transfer completes (for one-shot receive mode)
+    pub transfer_complete: Arc<Mutex<bool>>,
 }
 
 impl CliEventSink {
@@ -14,6 +18,8 @@ impl CliEventSink {
         Self {
             multi: MultiProgress::new(),
             progress_bars: Mutex::new(HashMap::new()),
+            pending_requests: Arc::new(Mutex::new(Vec::new())),
+            transfer_complete: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -46,7 +52,7 @@ impl EventSink for CliEventSink {
                     "connecting" => pb.set_message(format!("⏳ Connecting... {}", p.filename)),
                     "transferring" => {
                         pb.set_position(p.bytes_transferred);
-                        pb.set_message(format!("{}", p.filename));
+                        pb.set_message(p.filename.clone());
                     }
                     "error" => {
                         pb.abandon_with_message(format!("✗ {} — {}", p.filename,
@@ -56,61 +62,97 @@ impl EventSink for CliEventSink {
                     _ => {}
                 }
             }
-            BharatLinkEvent::TransferComplete(e) => {
+            BharatLinkEvent::TransferComplete(ref e) => {
                 if let Ok(mut bars) = self.progress_bars.lock() {
                     if let Some(pb) = bars.remove(&e.id) {
-                        pb.finish_with_message(format!("✓ {} — {}",
-                            e.filename.as_deref().unwrap_or("transfer"),
-                            e.status));
+                        pb.finish_with_message(format!("✓ {}",
+                            e.filename.as_deref().unwrap_or("transfer")));
                     }
                 }
                 let direction = if e.direction == "send" { "↑ Sent" } else { "↓ Received" };
                 let name = e.filename.as_deref()
                     .or(e.text_content.as_deref().map(|t| if t.len() > 40 { &t[..40] } else { t }))
                     .unwrap_or("item");
-                let size = e.file_size.map(|s| format_bytes(s)).unwrap_or_default();
-                let peer = e.peer_nickname.as_deref().unwrap_or(&e.peer_id[..8.min(e.peer_id.len())]);
+                let size = e.file_size.map(format_bytes).unwrap_or_default();
+                let peer = e.peer_nickname.as_deref()
+                    .unwrap_or(&e.peer_id[..8.min(e.peer_id.len())]);
+
                 if e.status == "complete" {
-                    eprintln!("  {} {} {} ({})", direction, name, size, peer);
+                    eprintln!("  {} {} {} (from {})", direction, name, size, peer);
+                    if let Some(ref path) = e.save_path {
+                        if e.direction == "receive" {
+                            eprintln!("  📁 Saved: {}", path);
+                        }
+                    }
+                    if let Some(ref text) = e.text_content {
+                        if e.direction == "receive" {
+                            eprintln!("  💬 {}", text);
+                        }
+                    }
                 } else {
                     eprintln!("  ✗ {} {} — {} ({})", direction, name, e.status, peer);
                 }
+
+                // Signal one-shot receive mode
+                if e.direction == "receive" && e.status == "complete" {
+                    if let Ok(mut flag) = self.transfer_complete.lock() {
+                        *flag = true;
+                    }
+                }
+
+                // Remove from pending requests
+                if let Ok(mut pending) = self.pending_requests.lock() {
+                    pending.retain(|r| r.id != e.id);
+                }
             }
-            BharatLinkEvent::IncomingRequest(r) => {
-                let from = r.from_nickname.as_deref().unwrap_or(&r.from_peer[..8.min(r.from_peer.len())]);
-                let what = match r.transfer_type.as_str() {
-                    "file" => format!("{} ({})",
-                        r.filename.as_deref().unwrap_or("file"),
-                        r.file_size.map(format_bytes).unwrap_or_default()),
-                    _ => "text message".to_string(),
-                };
-                eprintln!("\n📥 Incoming from {}: {}", from, what);
-                eprintln!("   (auto-accept from trusted peers, or accept via API)");
+            BharatLinkEvent::IncomingRequest(ref r) => {
+                let from = r.from_nickname.as_deref()
+                    .unwrap_or(&r.from_peer[..8.min(r.from_peer.len())]);
+                let short_id = &r.id[..8.min(r.id.len())];
+                match r.transfer_type.as_str() {
+                    "file" => {
+                        let name = r.filename.as_deref().unwrap_or("file");
+                        let size = r.file_size.map(format_bytes).unwrap_or_default();
+                        eprintln!("\n  📥 Incoming file from {}: {} {}", from, name, size);
+                    }
+                    _ => {
+                        eprintln!("\n  📥 Incoming transfer from {}", from);
+                    }
+                }
+                eprintln!("     ID: {}", short_id);
+                eprintln!("     Type: accept {}  or  reject {}\n", short_id, short_id);
+
+                // Store for interactive loop
+                if let Ok(mut pending) = self.pending_requests.lock() {
+                    pending.push(r.clone());
+                }
             }
             BharatLinkEvent::PeerDiscovered(p) => {
                 let status = if p.is_connected { "●" } else { "○" };
                 let name = p.nickname.as_deref().unwrap_or(&p.node_id_short);
-                eprintln!("  {} {} ({})", status, name, p.node_id_short);
+                // Only print on first discovery or status change (avoid spam)
+                if p.is_connected {
+                    eprintln!("  {} {} online ({})", status, name, p.node_id_short);
+                }
             }
             BharatLinkEvent::PeerReconnected { peer_id } => {
                 let short = if peer_id.len() >= 8 { &peer_id[..8] } else { &peer_id };
                 eprintln!("  ✅ Peer {} is back online", short);
             }
             BharatLinkEvent::Error(e) => {
-                let prefix = match e.error_type.as_str() {
-                    "reconnection" => "ℹ️ ",
-                    "connection" => "⚠️ ",
-                    _ => "❌ ",
-                };
-                eprintln!("  {}{}", prefix, e.message);
+                match e.error_type.as_str() {
+                    "reconnection" => eprintln!("  ℹ️  {}", e.message),
+                    "connection" => eprintln!("  ⚠️  {}", e.message),
+                    _ => eprintln!("  ❌ {}", e.message),
+                }
             }
-            BharatLinkEvent::NodeStatus(_) => {} // Handled by commands
-            BharatLinkEvent::Signal(_) => {} // Signals are internal
+            BharatLinkEvent::NodeStatus(_) => {}
+            BharatLinkEvent::Signal(_) => {}
         }
     }
 
     fn notify(&self, title: &str, body: &str) {
-        eprintln!("🔔 {}: {}", title, body);
+        eprintln!("  🔔 {}: {}", title, body);
     }
 }
 
