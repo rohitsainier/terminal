@@ -8,7 +8,7 @@ use crate::util::{epoch_ms, short_id};
 
 use iroh::discovery::mdns::MdnsDiscovery;
 use iroh::protocol::Router;
-use iroh::{Endpoint, PublicKey};
+use iroh::{EndpointAddr, Endpoint, PublicKey};
 use iroh_blobs::store::fs::FsStore;
 use iroh_blobs::BlobsProtocol;
 use std::collections::HashMap;
@@ -1039,6 +1039,8 @@ impl BharatLinkManager {
 // ═══ Connection Helper ══════════════════════════════════════════════════
 
 /// Connect to a peer with retry — handles cross-network relay/DNS resolution delays.
+/// Builds an EndpointAddr with the relay URL hint so iroh knows how to reach
+/// peers across different networks via relay servers.
 /// Tries up to 3 times with increasing backoff (0s, 3s, 5s).
 async fn connect_with_retry(
     endpoint: &Endpoint,
@@ -1048,6 +1050,14 @@ async fn connect_with_retry(
     let delays_secs = [0u64, 3, 5];
     let mut last_err = String::new();
 
+    // Build EndpointAddr with our relay URL as a hint for cross-network connectivity.
+    // If we're connected to a relay, the peer likely uses the same relay infrastructure.
+    let our_addr = endpoint.addr();
+    let mut peer_addr = EndpointAddr::new(peer_key);
+    if let Some(relay_url) = our_addr.relay_urls().next() {
+        peer_addr = peer_addr.with_relay_url(relay_url.clone());
+    }
+
     for (attempt, delay) in delays_secs.iter().enumerate() {
         if *delay > 0 {
             tracing::info!("[BharatLink] Connection retry {}/{}, waiting {}s...",
@@ -1055,16 +1065,17 @@ async fn connect_with_retry(
             tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
         }
 
+        // Try with full EndpointAddr (includes relay hint) first
         match tokio::time::timeout(
             std::time::Duration::from_secs(10),
-            endpoint.connect(peer_key, alpn),
+            endpoint.connect(peer_addr.clone(), alpn),
         ).await {
             Ok(Ok(conn)) => return Ok(conn),
             Ok(Err(e)) => {
                 let err = format!("{}", e);
-                if err.contains("No addressing information") {
+                if err.contains("No addressing information") || err.contains("timed out") {
                     last_err = err;
-                    continue; // Retry — peer address not yet resolved via relay/DNS
+                    continue; // Retry — peer address not yet resolved
                 }
                 return Err(err); // Non-retryable connection error
             }
