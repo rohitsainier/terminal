@@ -40,7 +40,7 @@ export default function InfoPanel(props: Props) {
     }
   };
 
-  const toggleSetting = (key: "auto_accept_text" | "accept_from_trusted_only" | "auto_accept_from_trusted") => {
+  const toggleSetting = (key: "auto_accept_text" | "accept_from_trusted_only" | "auto_accept_from_trusted" | "notifications_enabled") => {
     const current = props.store.settings();
     if (!current) return;
     const updated = { ...current, [key]: !current[key] };
@@ -364,6 +364,15 @@ export default function InfoPanel(props: Props) {
                   <span>Auto-accept from trusted</span>
                   <span class={s().auto_accept_from_trusted ? "blnk-on" : "blnk-off"}>
                     {s().auto_accept_from_trusted ? "ON" : "OFF"}
+                  </span>
+                </div>
+                <div
+                  class="blnk-setting-row blnk-setting-toggle"
+                  onClick={() => toggleSetting("notifications_enabled")}
+                >
+                  <span>Notifications</span>
+                  <span class={s().notifications_enabled ? "blnk-on" : "blnk-off"}>
+                    {s().notifications_enabled ? "ON" : "OFF"}
                   </span>
                 </div>
                 <div

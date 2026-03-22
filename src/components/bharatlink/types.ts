@@ -73,6 +73,17 @@ export interface TransferHistoryEntry {
   timestamp: number;
   duration_ms: number | null;
   save_path: string | null;
+  blob_hash: string | null;
+}
+
+// ─── Errors (inline chat display) ───────────────────────────────────────
+
+export interface BharatLinkError {
+  error_type: "connection" | "transfer" | "timeout" | "system" | "reconnection";
+  message: string;
+  peer_id: string | null;
+  transfer_id: string | null;
+  timestamp: number;
 }
 
 // ─── Signals (read receipts, typing indicators) ─────────────────────────
@@ -94,6 +105,7 @@ export interface BharatLinkSettings {
   download_dir: string;
   device_name: string;
   max_concurrent_transfers: number;
+  notifications_enabled: boolean;
 }
 
 // ─── View ────────────────────────────────────────────────────────────────
@@ -121,6 +133,9 @@ export interface BharatLinkStore {
   deliveredMessages: Accessor<Set<string>>;
   typingPeers: Accessor<Set<string>>;
 
+  // Errors (inline chat display)
+  chatErrors: Accessor<BharatLinkError[]>;
+
   // Settings
   settings: Accessor<BharatLinkSettings | null>;
 
@@ -145,6 +160,7 @@ export interface BharatLinkStore {
   acceptTransfer: (requestId: string) => Promise<void>;
   rejectTransfer: (requestId: string) => Promise<void>;
   cancelTransfer: (transferId: string) => Promise<void>;
+  retryTransfer: (transferId: string) => Promise<void>;
   refreshHistory: () => Promise<void>;
   clearHistory: () => Promise<void>;
   getSettings: () => Promise<void>;

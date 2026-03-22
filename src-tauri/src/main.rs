@@ -59,6 +59,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             // PTY
             commands::create_session,
@@ -180,6 +181,7 @@ fn main() {
             bharatlink::bharatlink_capture_screenshot,
             bharatlink::bharatlink_send_clipboard,
             bharatlink::bharatlink_send_signal,
+            bharatlink::bharatlink_retry_transfer,
         ])
         .run(tauri::generate_context!())
         .expect("error running flux terminal");

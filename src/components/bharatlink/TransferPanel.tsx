@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   BharatLinkStore,
+  BharatLinkError,
   TransferHistoryEntry,
   TransferRequest,
   TransferProgress,
@@ -13,7 +14,8 @@ import type {
 type ChatItem =
   | { kind: "history"; entry: TransferHistoryEntry; ts: number }
   | { kind: "request"; entry: TransferRequest; ts: number }
-  | { kind: "active"; entry: TransferProgress; ts: number };
+  | { kind: "active"; entry: TransferProgress; ts: number }
+  | { kind: "error"; entry: BharatLinkError; ts: number };
 
 // ─── Image file detection ───────────────────────────────────────────
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "tiff"]);
@@ -125,6 +127,14 @@ export default function TransferPanel(props: Props) {
       : props.store.pendingRequests();
     for (const entry of requests) {
       items.push({ kind: "request", entry, ts: entry.timestamp });
+    }
+
+    // Inline error/reconnection messages for this peer (+ global ones)
+    const errors = props.store.chatErrors().filter(
+      (e) => !e.peer_id || e.peer_id === peerId
+    );
+    for (const entry of errors) {
+      items.push({ kind: "error", entry, ts: entry.timestamp });
     }
 
     // Sort ascending (oldest first, newest at bottom)
@@ -434,7 +444,7 @@ export default function TransferPanel(props: Props) {
           <div class="blnk-chat-file-meta">
             {formatBytes(entry.file_size)} · {entry.status}
           </div>
-          <Show when={entry.save_path && !isFailed}>
+          <Show when={!isSent && entry.save_path && !isFailed}>
             <div class="blnk-chat-file-save">
               Saved: {entry.save_path?.split("/").pop() || entry.save_path}
             </div>
@@ -443,6 +453,14 @@ export default function TransferPanel(props: Props) {
             <div class="blnk-chat-file-error">
               {entry.save_path}
             </div>
+          </Show>
+          <Show when={isFailed && entry.blob_hash}>
+            <button
+              class="blnk-btn blnk-btn-retry"
+              onClick={() => props.store.retryTransfer(entry.id)}
+            >
+              RETRY
+            </button>
           </Show>
         </div>
         <div class="blnk-chat-time-row">
@@ -532,6 +550,27 @@ export default function TransferPanel(props: Props) {
     );
   };
 
+  const renderErrorItem = (err: BharatLinkError) => {
+    const isReconnect = err.error_type === "reconnection";
+    return (
+      <div class="blnk-chat-row blnk-chat-row-center">
+        <div
+          class="blnk-chat-system-card"
+          classList={{
+            "blnk-chat-system-reconnect": isReconnect,
+            "blnk-chat-system-error": !isReconnect,
+          }}
+        >
+          <span class="blnk-chat-system-icon">
+            {isReconnect ? "\u2705" : "\u26A0\uFE0F"}
+          </span>
+          <span class="blnk-chat-system-text">{err.message}</span>
+        </div>
+        <span class="blnk-chat-time">{formatChatTime(err.timestamp)}</span>
+      </div>
+    );
+  };
+
   const renderChatItem = (item: ChatItem) => {
     switch (item.kind) {
       case "history":
@@ -540,6 +579,8 @@ export default function TransferPanel(props: Props) {
         return renderRequestItem(item.entry);
       case "active":
         return renderActiveTransfer(item.entry);
+      case "error":
+        return renderErrorItem(item.entry);
     }
   };
 

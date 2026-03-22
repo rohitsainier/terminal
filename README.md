@@ -87,6 +87,11 @@ Sovereign peer-to-peer file & text sharing. No servers, no accounts, no cloud. I
 - **Read receipts & typing indicator** — Know when messages are delivered
 - **Image preview & link cards** — Rich inline media previews in chat
 - **Auto-accept from trusted** — Trusted peers' transfers skip manual approval
+- **Transfer retry** — Failed downloads show a RETRY button, re-downloads from blob hash
+- **Error handling** — Connection failures & transfer errors shown as inline chat bubbles
+- **Active heartbeat** — Real connectivity probes every ~15s (no more false "online" status)
+- **Reconnection alerts** — "Peer is back online" notification when a peer reconnects
+- **Native notifications** — OS notifications for incoming files/messages (configurable)
 - **Works offline** — LAN transfers need no internet
 
 </td>
@@ -191,6 +196,11 @@ BharatLink is a sovereign peer-to-peer file and text sharing system built into F
 | **Cross-Network** | NAT hole punching + relay fallback for internet transfers |
 | **Content Dedup** | Same file sent twice? Second transfer is instant (BLAKE3 hash match) |
 | **Resumable** | Interrupted transfers resume from where they left off |
+| **Transfer Retry** | Failed downloads show a RETRY button, re-fetches from BLAKE3 hash |
+| **Error UX** | Connection failures, transfer errors, and timeouts shown as inline red chat bubbles |
+| **Active Heartbeat** | Active QUIC probes every ~15s detect real peer connectivity (no stale status) |
+| **Reconnection** | Automatic detection when a peer comes back online, with in-chat notification |
+| **Notifications** | Native OS notifications for incoming files and messages when dashboard is closed |
 
 ### Security
 
@@ -403,6 +413,10 @@ Flux supports three AI providers — configure in Settings (`⌘,`):
 - **BharatLink** uses [iroh](https://iroh.computer) for QUIC-based P2P with mDNS discovery, NAT hole punching, relay fallback, and BLAKE3-verified resumable file transfers — zero servers required.
 - **Content-addressed deduplication** — same file sent twice uses zero bandwidth on the second transfer (BLAKE3 hash match in local blob store).
 - **Streaming progress** — real-time progress bar with bytes/speed/percentage during file receive (uses `GetProgress::stream()` from iroh-blobs).
+- **Active heartbeat** — peer online/offline detection uses active QUIC connection probes (not stale metadata). Every ~15s, trusted peers are probed via `endpoint.connect()` with a 4-second timeout.
+- **Error handling** — `BharatLinkError` events surface connection failures, transfer errors, and timeouts as inline red chat bubbles in the UI.
+- **Transfer retry** — failed downloads persist `blob_hash` for re-download. RETRY button in chat re-initiates `download_blob()` with the original hash.
+- **Native notifications** — OS-level alerts via `tauri-plugin-notification` for incoming files/messages when the dashboard isn't focused.
 
 <br/>
 

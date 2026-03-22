@@ -8,6 +8,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BharatLinkStore,
   BharatLinkSignal,
+  BharatLinkError,
   NodeInfo,
   PeerInfo,
   TransferProgress,
@@ -28,6 +29,7 @@ export function useBharatLinkData(): BharatLinkStore {
   const [settings, setSettings] = createSignal<BharatLinkSettings | null>(null);
   const [deliveredMessages, setDeliveredMessages] = createSignal<Set<string>>(new Set());
   const [typingPeers, setTypingPeers] = createSignal<Set<string>>(new Set());
+  const [chatErrors, setChatErrors] = createSignal<BharatLinkError[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [utc, setUtc] = createSignal("");
@@ -150,6 +152,30 @@ export function useBharatLinkData(): BharatLinkStore {
             return next;
           });
         }
+      })
+    );
+
+    // Error events (inline chat display)
+    unlisteners.push(
+      await listen<BharatLinkError>("bharatlink-error", (e) => {
+        setChatErrors((prev) => [...prev, e.payload].slice(-50));
+        // Auto-clear after 15 seconds
+        const ts = e.payload.timestamp;
+        setTimeout(() => {
+          setChatErrors((prev) => prev.filter((err) => err.timestamp !== ts));
+        }, 15000);
+      })
+    );
+
+    // Peer reconnection events
+    unlisteners.push(
+      await listen<string>("bharatlink-peer-reconnected", (e) => {
+        // Update peer status to connected
+        setPeers((prev) =>
+          prev.map((p) =>
+            p.node_id === e.payload ? { ...p, is_connected: true } : p
+          )
+        );
       })
     );
   };
@@ -328,6 +354,17 @@ export function useBharatLinkData(): BharatLinkStore {
     }
   };
 
+  const retryTransfer = async (transferId: string) => {
+    setError(null);
+    try {
+      await invoke("bharatlink_retry_transfer", { transferId });
+      // Remove failed entry from local history (backend removes it too)
+      setHistory((prev) => prev.filter((h) => h.id !== transferId));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const refreshHistory = async () => {
     try {
       const h = await invoke<TransferHistoryEntry[]>("bharatlink_get_history");
@@ -405,6 +442,7 @@ export function useBharatLinkData(): BharatLinkStore {
     history,
     deliveredMessages,
     typingPeers,
+    chatErrors,
     settings,
     loading,
     error,
@@ -424,6 +462,7 @@ export function useBharatLinkData(): BharatLinkStore {
     acceptTransfer,
     rejectTransfer,
     cancelTransfer,
+    retryTransfer,
     refreshHistory,
     clearHistory,
     getSettings,
