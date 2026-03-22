@@ -1,7 +1,7 @@
 use crate::events::BharatLinkEvent;
 use crate::state::SharedState;
 use crate::types::*;
-use crate::util::epoch_ms;
+use crate::util::{connect_with_retry, epoch_ms};
 
 use futures_lite::StreamExt;
 use iroh::Endpoint;
@@ -66,12 +66,13 @@ impl FileReceiveHandler {
             },
         ));
 
-        // Connect to the sender's blob protocol endpoint
+        // Connect to the sender's blob protocol endpoint.
+        // Use connect_with_retry: sender's address may need time to propagate via relay/DNS,
+        // especially on retry_transfer where the original cached address may have expired.
         tracing::info!("[BharatLink] Connecting to sender {} for blob fetch...", from_peer);
-        let conn = self.endpoint
-            .connect(sender_key, iroh_blobs::ALPN)
+        let conn = connect_with_retry(&self.endpoint, sender_key, iroh_blobs::ALPN)
             .await
-            .map_err(|e| format!("Failed to connect for file download: {:?}", e))?;
+            .map_err(|e| format!("Failed to connect for file download: {}", e))?;
         tracing::info!("[BharatLink] Connected to sender, starting blob fetch...");
 
         // Emit initial "transferring" progress

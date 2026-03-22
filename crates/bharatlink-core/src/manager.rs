@@ -4,7 +4,7 @@ use crate::receive::FileReceiveHandler;
 use crate::state::{SharedState, TransferState};
 use crate::storage;
 use crate::types::*;
-use crate::util::{epoch_ms, short_id};
+use crate::util::{connect_with_retry, epoch_ms, short_id};
 
 use iroh::discovery::mdns::MdnsDiscovery;
 use iroh::protocol::Router;
@@ -211,7 +211,7 @@ impl BharatLinkManager {
     ) {
         let mut peer_state: HashMap<String, (u64, bool)> = HashMap::new();
         let mut cycle_count: u32 = 0;
-        const PROBE_TIMEOUT_SECS: u64 = 5;
+        const PROBE_TIMEOUT_SECS: u64 = 15; // relay QUIC handshakes need more time
 
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -242,41 +242,49 @@ impl BharatLinkManager {
             };
             events.emit(BharatLinkEvent::NodeStatus(status));
 
-            // Active probe: attempt a lightweight QUIC connect to each trusted peer
-            let mut probe_handles = Vec::new();
+            // Active probe: lightweight QUIC connect to each trusted peer.
+            // Only run every 3rd cycle (~15s) to reduce connection churn.
+            // On non-probe cycles we reuse the cached online state from peer_state.
+            let cycle_is_probe = cycle_count % 3 == 0;
+            let probe_results: HashMap<String, bool> = if cycle_is_probe {
+                let mut probe_handles = Vec::new();
 
-            for (peer_id, _nickname) in &trusted_clone {
-                if peer_id == &our_id {
-                    continue;
+                for (peer_id, _nickname) in &trusted_clone {
+                    if peer_id == &our_id {
+                        continue;
+                    }
+
+                    if let Ok(peer_key) = peer_id.parse::<PublicKey>() {
+                        let ep = endpoint.clone();
+                        let pid = peer_id.clone();
+                        probe_handles.push(tokio::spawn(async move {
+                            let result = tokio::time::timeout(
+                                std::time::Duration::from_secs(PROBE_TIMEOUT_SECS),
+                                ep.connect(peer_key, BHARATLINK_SIGNAL_ALPN),
+                            ).await;
+                            let online = match result {
+                                Ok(Ok(conn)) => {
+                                    conn.close(0u32.into(), b"probe");
+                                    true
+                                }
+                                _ => false,
+                            };
+                            (pid, online)
+                        }));
+                    }
                 }
 
-                if let Ok(peer_key) = peer_id.parse::<PublicKey>() {
-                    let ep = endpoint.clone();
-                    let pid = peer_id.clone();
-                    probe_handles.push(tokio::spawn(async move {
-                        let result = tokio::time::timeout(
-                            std::time::Duration::from_secs(PROBE_TIMEOUT_SECS),
-                            ep.connect(peer_key, BHARATLINK_SIGNAL_ALPN),
-                        ).await;
-                        let online = match result {
-                            Ok(Ok(conn)) => {
-                                conn.close(0u32.into(), b"probe");
-                                true
-                            }
-                            _ => false,
-                        };
-                        (pid, online)
-                    }));
+                let mut results = HashMap::new();
+                for handle in probe_handles {
+                    if let Ok((pid, online)) = handle.await {
+                        results.insert(pid, online);
+                    }
                 }
-            }
-
-            // Collect probe results
-            let mut probe_results: HashMap<String, bool> = HashMap::new();
-            for handle in probe_handles {
-                if let Ok((pid, online)) = handle.await {
-                    probe_results.insert(pid, online);
-                }
-            }
+                results
+            } else {
+                // Preserve cached online state — don't flip peers offline between probes
+                peer_state.iter().map(|(pid, (_, online))| (pid.clone(), *online)).collect()
+            };
 
             // Process results and emit events
             let now = epoch_ms();
@@ -1023,8 +1031,13 @@ impl BharatLinkManager {
 
         let data = serde_json::to_vec(&signal).map_err(|e| format!("Serialize error: {}", e))?;
 
-        let conn = endpoint.connect(peer_key, BHARATLINK_SIGNAL_ALPN).await
-            .map_err(|e| format!("Signal connect error: {}", e))?;
+        let conn = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            endpoint.connect(peer_key, BHARATLINK_SIGNAL_ALPN),
+        )
+        .await
+        .map_err(|_| "Signal connect timed out".to_string())?
+        .map_err(|e| format!("Signal connect error: {}", e))?;
 
         let mut send = conn.open_uni().await.map_err(|e| format!("Stream error: {}", e))?;
         send.write_all(&data).await.map_err(|e| format!("Write error: {}", e))?;
@@ -1036,44 +1049,3 @@ impl BharatLinkManager {
     }
 }
 
-// ═══ Connection Helper ══════════════════════════════════════════════════
-
-/// Connect to a peer with retry — handles cross-network relay/DNS resolution delays.
-/// Tries up to 3 times with increasing backoff (0s, 3s, 5s).
-async fn connect_with_retry(
-    endpoint: &Endpoint,
-    peer_key: PublicKey,
-    alpn: &[u8],
-) -> Result<iroh::endpoint::Connection, String> {
-    let delays_secs = [0u64, 3, 5];
-    let mut last_err = String::new();
-
-    for (attempt, delay) in delays_secs.iter().enumerate() {
-        if *delay > 0 {
-            tracing::info!("[BharatLink] Connection retry {}/{}, waiting {}s...",
-                attempt + 1, delays_secs.len(), delay);
-            tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
-        }
-
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            endpoint.connect(peer_key, alpn),
-        ).await {
-            Ok(Ok(conn)) => return Ok(conn),
-            Ok(Err(e)) => {
-                let err = format!("{}", e);
-                if err.contains("No addressing information") {
-                    last_err = err;
-                    continue; // Retry — peer address not yet resolved via relay/DNS
-                }
-                return Err(err); // Non-retryable connection error
-            }
-            Err(_) => {
-                last_err = "Connection timed out".to_string();
-                continue; // Timeout — retry
-            }
-        }
-    }
-
-    Err(last_err)
-}
