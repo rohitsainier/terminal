@@ -3,6 +3,7 @@ node_modules/
 dist/
 
 # Rust
+target/
 src-tauri/target/
 src-tauri/gen/
 

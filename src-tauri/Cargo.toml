@@ -17,13 +17,13 @@ portable-pty = "0.8"
 
 # AI
 reqwest = { version = "0.12", features = ["json"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "net"] }
+tokio = { workspace = true }
 
 # Utilities
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
-dirs = "5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
 toml = "0.8"
 
 # Crypto (WPA2 key derivation for pcap generation)
@@ -31,12 +31,8 @@ sha1 = "0.10"
 hmac = "0.12"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
 
-# BharatLink — P2P file & text sharing
-iroh = { version = "0.95", features = ["discovery-local-network"] }
-iroh-blobs = { version = "0.97", features = ["fs-store"] }
-rand = "0.9"
-futures-lite = "2"
+# BharatLink — P2P file & text sharing (core library)
+bharatlink-core = { path = "../crates/bharatlink-core" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-

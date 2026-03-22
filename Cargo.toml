@@ -1,0 +1,15 @@
+[workspace]
+members = ["src-tauri", "crates/bharatlink-core", "crates/bharatlink-cli"]
+resolver = "2"
+
+[workspace.dependencies]
+iroh = { version = "0.95", features = ["discovery-local-network"] }
+iroh-blobs = { version = "0.97", features = ["fs-store"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "time", "net", "io-util"] }
+futures-lite = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+rand = "0.9"
+tracing = "0.1"
