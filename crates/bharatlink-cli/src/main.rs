@@ -321,21 +321,28 @@ async fn interactive_loop(
                             let file_path = strip_quotes(parts[2]);
                             let short = &peer_id[..8.min(peer_id.len())];
                             eprintln!("  📤 Sending {} to {}...", file_path, short);
-                            let mut mgr = manager.lock().await;
-                            match mgr.send_file(peer_id, file_path).await {
+                            let result = send_with_retry(&manager, |mgr| {
+                                let pid = peer_id.clone();
+                                let fp = file_path.clone();
+                                Box::pin(async move { mgr.send_file(pid, fp).await })
+                            }).await;
+                            match result {
                                 Ok(id) => eprintln!("  ✅ Transfer {} complete", &id[..8]),
                                 Err(e) => eprintln!("  ❌ {}", e),
                             }
                         }
                         Some("text") if parts.len() >= 3 => {
                             let peer_id = parts[1].to_string();
-                            // Re-split to get the full message (may contain spaces)
                             let after_text_and_peer = args.splitn(3, ' ').nth(2).unwrap_or("");
                             let message = after_text_and_peer.to_string();
                             let short = &peer_id[..8.min(peer_id.len())];
                             eprintln!("  💬 Sending text to {}...", short);
-                            let mut mgr = manager.lock().await;
-                            match mgr.send_text(peer_id, message).await {
+                            let result = send_with_retry(&manager, |mgr| {
+                                let pid = peer_id.clone();
+                                let msg = message.clone();
+                                Box::pin(async move { mgr.send_text(pid, msg).await })
+                            }).await;
+                            match result {
                                 Ok(id) => eprintln!("  ✅ Message {} sent", &id[..8]),
                                 Err(e) => eprintln!("  ❌ {}", e),
                             }
@@ -370,6 +377,39 @@ async fn interactive_loop(
             }
         }
     }
+}
+
+/// Retry a send operation with backoff — handles cross-network relay resolution delays
+async fn send_with_retry<F>(
+    manager: &Arc<TokioMutex<BharatLinkManager>>,
+    make_future: F,
+) -> Result<String, String>
+where
+    F: Fn(&mut BharatLinkManager) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + '_>>,
+{
+    let delays = [0, 3, 5]; // seconds: try immediately, wait 3s, wait 5s
+    let mut last_err = String::new();
+
+    for (attempt, delay) in delays.iter().enumerate() {
+        if *delay > 0 {
+            eprintln!("  ⏳ Retrying in {}s (attempt {}/{})...", delay, attempt + 1, delays.len());
+            tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+        }
+
+        let mut mgr = manager.lock().await;
+        match make_future(&mut mgr).await {
+            Ok(id) => return Ok(id),
+            Err(e) => {
+                if e.contains("No addressing information") || e.contains("Failed to connect") {
+                    last_err = e;
+                    continue; // Retry — peer might not be discovered yet
+                }
+                return Err(e); // Non-retryable error
+            }
+        }
+    }
+
+    Err(format!("{}\n  Hint: For cross-network transfers, make sure the peer's node is running and both sides have trusted each other.", last_err))
 }
 
 /// Resolve a short ID prefix to the full request ID
@@ -520,57 +560,61 @@ async fn cmd_untrust(config_dir: std::path::PathBuf, peer_id: String) {
 }
 
 async fn cmd_send(config_dir: std::path::PathBuf, peer_id: String, path: String) {
-    let mut manager = BharatLinkManager::new(config_dir);
+    let manager = Arc::new(TokioMutex::new(BharatLinkManager::new(config_dir)));
     let events: Arc<dyn bharatlink_core::EventSink> = Arc::new(CliEventSink::new());
 
     eprintln!("🔗 Starting node for file transfer...");
-    if let Err(e) = manager.start(events).await {
-        eprintln!("❌ Failed to start node: {}", e);
-        std::process::exit(1);
+    {
+        let mut mgr = manager.lock().await;
+        if let Err(e) = mgr.start(events).await {
+            eprintln!("❌ Failed to start node: {}", e);
+            std::process::exit(1);
+        }
     }
-
-    // Wait for mDNS/DNS discovery to find the peer
-    eprintln!("🔍 Discovering peer {}...", &peer_id[..8.min(peer_id.len())]);
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     eprintln!("📤 Sending {} to {}...", path, &peer_id[..8.min(peer_id.len())]);
-    match manager.send_file(peer_id, path).await {
-        Ok(id) => {
-            eprintln!("✅ Transfer {} complete", &id[..8]);
-        }
-        Err(e) => {
-            eprintln!("❌ Send failed: {}", e);
-        }
+    let result = send_with_retry(&manager, |mgr| {
+        let pid = peer_id.clone();
+        let p = path.clone();
+        Box::pin(async move { mgr.send_file(pid, p).await })
+    }).await;
+
+    match result {
+        Ok(id) => eprintln!("✅ Transfer {} complete", &id[..8]),
+        Err(e) => eprintln!("❌ Send failed: {}", e),
     }
 
-    let _ = manager.stop().await;
+    let mut mgr = manager.lock().await;
+    let _ = mgr.stop().await;
 }
 
 async fn cmd_text(config_dir: std::path::PathBuf, peer_id: String, message: String) {
-    let mut manager = BharatLinkManager::new(config_dir);
+    let manager = Arc::new(TokioMutex::new(BharatLinkManager::new(config_dir)));
     let events: Arc<dyn bharatlink_core::EventSink> = Arc::new(CliEventSink::new());
 
     eprintln!("🔗 Starting node for text transfer...");
-    if let Err(e) = manager.start(events).await {
-        eprintln!("❌ Failed to start node: {}", e);
-        std::process::exit(1);
+    {
+        let mut mgr = manager.lock().await;
+        if let Err(e) = mgr.start(events).await {
+            eprintln!("❌ Failed to start node: {}", e);
+            std::process::exit(1);
+        }
     }
-
-    // Wait for mDNS/DNS discovery to find the peer
-    eprintln!("🔍 Discovering peer {}...", &peer_id[..8.min(peer_id.len())]);
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     eprintln!("💬 Sending text to {}...", &peer_id[..8.min(peer_id.len())]);
-    match manager.send_text(peer_id, message).await {
-        Ok(id) => {
-            eprintln!("✅ Message {} sent", &id[..8]);
-        }
-        Err(e) => {
-            eprintln!("❌ Send failed: {}", e);
-        }
+    let result = send_with_retry(&manager, |mgr| {
+        let pid = peer_id.clone();
+        let msg = message.clone();
+        Box::pin(async move { mgr.send_text(pid, msg).await })
+    }).await;
+
+    match result {
+        Ok(id) => eprintln!("✅ Message {} sent", &id[..8]),
+        Err(e) => eprintln!("❌ Send failed: {}", e),
     }
 
-    let _ = manager.stop().await;
+    let mut mgr = manager.lock().await;
+    let _ = mgr.stop().await;
 }
 
 fn cmd_history(config_dir: std::path::PathBuf) {

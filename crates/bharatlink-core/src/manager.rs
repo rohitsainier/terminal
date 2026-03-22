@@ -534,8 +534,8 @@ impl BharatLinkManager {
         let peer_key: PublicKey = peer_id.parse()
             .map_err(|e| format!("Invalid peer ID: {}", e))?;
 
-        // Connect
-        let conn = endpoint.connect(peer_key, BHARATLINK_META_ALPN).await
+        // Connect with retry — cross-network relay/DNS resolution can take time
+        let conn = connect_with_retry(&endpoint, peer_key, BHARATLINK_META_ALPN).await
             .map_err(|e| {
                 if let Some(ref ev) = events {
                     ev.emit(BharatLinkEvent::Error(BharatLinkError {
@@ -546,7 +546,7 @@ impl BharatLinkManager {
                         timestamp: epoch_ms(),
                     }));
                 }
-                format!("Failed to connect to peer: {}. Make sure the peer is online and both devices are on the same network.", e)
+                format!("Failed to connect to peer: {}. Make sure the peer is online and both sides have trusted each other.", e)
             })?;
 
         let request = TransferRequest {
@@ -632,7 +632,7 @@ impl BharatLinkManager {
         let peer_key: PublicKey = peer_id.parse()
             .map_err(|e| format!("Invalid peer ID: {}", e))?;
 
-        let conn = endpoint.connect(peer_key, BHARATLINK_TEXT_ALPN).await
+        let conn = connect_with_retry(&endpoint, peer_key, BHARATLINK_TEXT_ALPN).await
             .map_err(|e| {
                 if let Some(ref ev) = events {
                     ev.emit(BharatLinkEvent::Error(BharatLinkError {
@@ -643,7 +643,7 @@ impl BharatLinkManager {
                         timestamp: epoch_ms(),
                     }));
                 }
-                format!("Failed to connect to peer: {}. Make sure the peer is online.", e)
+                format!("Failed to connect to peer: {}. Make sure the peer is online and both sides have trusted each other.", e)
             })?;
 
         let mut send = conn.open_uni().await.map_err(|e| format!("Stream error: {}", e))?;
@@ -1034,4 +1034,46 @@ impl BharatLinkManager {
 
         Ok(())
     }
+}
+
+// ═══ Connection Helper ══════════════════════════════════════════════════
+
+/// Connect to a peer with retry — handles cross-network relay/DNS resolution delays.
+/// Tries up to 3 times with increasing backoff (0s, 3s, 5s).
+async fn connect_with_retry(
+    endpoint: &Endpoint,
+    peer_key: PublicKey,
+    alpn: &[u8],
+) -> Result<iroh::endpoint::Connection, String> {
+    let delays_secs = [0u64, 3, 5];
+    let mut last_err = String::new();
+
+    for (attempt, delay) in delays_secs.iter().enumerate() {
+        if *delay > 0 {
+            tracing::info!("[BharatLink] Connection retry {}/{}, waiting {}s...",
+                attempt + 1, delays_secs.len(), delay);
+            tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+        }
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            endpoint.connect(peer_key, alpn),
+        ).await {
+            Ok(Ok(conn)) => return Ok(conn),
+            Ok(Err(e)) => {
+                let err = format!("{}", e);
+                if err.contains("No addressing information") {
+                    last_err = err;
+                    continue; // Retry — peer address not yet resolved via relay/DNS
+                }
+                return Err(err); // Non-retryable connection error
+            }
+            Err(_) => {
+                last_err = "Connection timed out".to_string();
+                continue; // Timeout — retry
+            }
+        }
+    }
+
+    Err(last_err)
 }
