@@ -10,6 +10,8 @@ A blazing-fast, GPU-accelerated terminal emulator built with **Tauri + SolidJS +
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-blue?style=for-the-badge&logo=tauri&labelColor=0a0e14)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-🦀-orange?style=for-the-badge&labelColor=0a0e14)](https://www.rust-lang.org)
 [![SolidJS](https://img.shields.io/badge/SolidJS-⚡-4f88c6?style=for-the-badge&labelColor=0a0e14)](https://www.solidjs.com)
+[![crates.io](https://img.shields.io/crates/v/bharatlink?style=for-the-badge&label=bharatlink&labelColor=0a0e14&color=fc8d62)](https://crates.io/crates/bharatlink)
+[![crates.io](https://img.shields.io/crates/v/bharatlink-core?style=for-the-badge&label=bharatlink-core&labelColor=0a0e14&color=fc8d62)](https://crates.io/crates/bharatlink-core)
 
 <br/>
 
@@ -158,7 +160,40 @@ Toggle cinematic effects on and off in real-time.
 
 ## 🔗 BharatLink — P2P Share
 
-BharatLink is a sovereign peer-to-peer file and text sharing system built into Flux Terminal. Think of it as **India's AirDrop** — but cross-platform, works across networks, and runs entirely without servers or accounts.
+BharatLink is a sovereign peer-to-peer file and text sharing system. Think of it as **India's AirDrop** — cross-platform, works across networks, and runs entirely without servers or accounts.
+
+Available as:
+- **Flux Terminal** — Full GUI with chat-style UI (`⌘⇧B`)
+- **CLI** — Standalone terminal tool (`cargo install bharatlink`)
+- **Library** — Embed in your own Rust app (`bharatlink-core` on crates.io)
+
+### Install BharatLink CLI
+
+```bash
+# One-liner (macOS/Linux) — no Rust required
+curl -fsSL https://raw.githubusercontent.com/rohitsainier/terminal/main/install.sh | sh
+
+# Or via Cargo
+cargo install bharatlink
+
+# Or via Homebrew (macOS)
+brew install rohitsainier/tap/bharatlink
+```
+
+### CLI Quick Start
+
+```bash
+bharatlink start                              # Start P2P node (interactive daemon)
+bharatlink trust <peer_id> "Friend"           # Trust a peer
+bharatlink send file <peer_id> ./photo.jpg    # Send a file
+bharatlink send text <peer_id> "hello!"       # Send a message
+bharatlink receive                            # Wait for one file, save, exit
+bharatlink history                            # Show transfer history
+```
+
+### CLI ↔ Flux Terminal
+
+Both use the same iroh P2P protocol — CLI and Flux Terminal can talk to each other seamlessly. Start a CLI node, add its ID in Flux Terminal, and transfer files between them.
 
 ### How It Works
 
@@ -285,7 +320,17 @@ Open BharatLink: `⌘/Ctrl + Shift + B`
 
 ## 🚀 Installation
 
-### Prerequisites
+### BharatLink CLI (standalone — no Rust needed)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rohitsainier/terminal/main/install.sh | sh
+```
+
+Or with Cargo: `cargo install bharatlink`
+
+### Flux Terminal (full desktop app)
+
+#### Prerequisites
 
 | Requirement | Version | Check |
 |---|---|---|
@@ -293,12 +338,12 @@ Open BharatLink: `⌘/Ctrl + Shift + B`
 | **Rust** | ≥ 1.70 | `rustc --version` |
 | **Tauri CLI** | ≥ 2.0 | `cargo tauri --version` |
 
-### Build from Source
+#### Build from Source
 
 ```bash
 # Clone the repo
 git clone https://github.com/rohitsainier/terminal.git
-cd flux-terminal
+cd terminal
 
 # Install frontend dependencies
 npm install
@@ -308,6 +353,22 @@ npm run tauri dev
 
 # Build for production
 npm run tauri build
+```
+
+### BharatLink as a Library
+
+```toml
+# Cargo.toml
+[dependencies]
+bharatlink-core = "0.2"
+```
+
+```rust
+use bharatlink_core::BharatLinkManager;
+
+let manager = BharatLinkManager::new(config_dir, data_dir);
+manager.start_node().await?;
+manager.send_text(&peer_id, "hello").await?;
 ```
 
 <br/>
@@ -379,6 +440,34 @@ Flux supports three AI providers — configure in Settings (`⌘,`):
 
 ## 🏗️ Architecture
 
+### Workspace Structure
+
+```
+flux-terminal/
+├── crates/
+│   ├── bharatlink-core/        # P2P library (crates.io: bharatlink-core)
+│   │   └── src/
+│   │       ├── manager.rs      # BharatLinkManager — node lifecycle
+│   │       ├── protocols.rs    # Meta/Text/Signal protocol handlers
+│   │       ├── receive.rs      # FileReceiveHandler — blob downloads
+│   │       ├── state.rs        # SharedState (Arc<TokioMutex<>>)
+│   │       ├── storage.rs      # JSON persistence (history, peers, settings)
+│   │       ├── types.rs        # All shared types & structs
+│   │       ├── events.rs       # EventSink trait (decouple from Tauri)
+│   │       └── util.rs         # Helpers (epoch_ms, short_id)
+│   └── bharatlink-cli/         # CLI binary (crates.io: bharatlink)
+│       └── src/main.rs         # clap CLI + interactive daemon
+├── src/                        # Flux Terminal frontend (SolidJS)
+├── src-tauri/                  # Flux Terminal backend (thin adapter)
+│   └── src/bharatlink.rs       # Tauri ↔ bharatlink-core bridge
+├── install.sh                  # One-liner installer script
+└── .github/workflows/
+    ├── build.yml               # Flux Terminal CI
+    └── release-cli.yml         # BharatLink CLI cross-platform releases
+```
+
+### System Architecture
+
 ```
 ┌─────────────────────────────────────────────┐
 │                 SolidJS Frontend             │
@@ -387,9 +476,21 @@ Flux supports three AI providers — configure in Settings (`⌘,`):
 └───────────────┬─────────────────────────────┘
                 │ Tauri IPC (invoke/listen)
 ┌───────────────┴─────────────────────────────┐
-│                 Rust Backend                  │
+│           Rust Backend (src-tauri)            │
 │  PTY · AI Providers · Config · SSH · MCP     │
-│  NetOps (28 tools) · BharatLink (iroh P2P)   │
+│  NetOps (28 tools) · BharatLink adapter      │
+└───────────────┬─────────────────────────────┘
+                │ uses
+┌───────────────┴─────────────────────────────┐
+│          bharatlink-core (library)           │
+│  BharatLinkManager · Protocol Handlers       │
+│  iroh 0.95 · iroh-blobs 0.97 · QUIC/TLS    │
+└──────────────────────────────────────────────┘
+                ▲
+                │ also uses
+┌───────────────┴─────────────────────────────┐
+│          bharatlink CLI (binary)             │
+│  Interactive daemon · send/receive/trust     │
 └──────────────────────────────────────────────┘
 ```
 
@@ -401,7 +502,7 @@ Flux supports three AI providers — configure in Settings (`⌘,`):
 ├──────────────────────────────┤
 │  useBharatLinkData.ts        │   ← Signals, events, Tauri invoke
 ├──────────────────────────────┤
-│  bharatlink.rs               │   ← BharatLinkManager + Handlers
+│  bharatlink-core (library)   │   ← BharatLinkManager + Handlers
 ├──────────────────────────────┤
 │  iroh 0.95 (QUIC endpoint)   │   ← mDNS, NAT punch, relay
 │  iroh-blobs 0.97 (storage)   │   ← BLAKE3, chunked, resumable
