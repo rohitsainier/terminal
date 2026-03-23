@@ -171,7 +171,7 @@ Available as:
 
 ```bash
 # One-liner (macOS/Linux) — no Rust required
-curl -fsSL https://raw.githubusercontent.com/rohitsainier/terminal/main/install.sh | sh
+curl -fsSL https://rohitsainier.github.io/pages/bharatlink/install.sh | sh
 
 # Or via Cargo
 cargo install bharatlink
@@ -323,7 +323,7 @@ Open BharatLink: `⌘/Ctrl + Shift + B`
 ### BharatLink CLI (standalone — no Rust needed)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rohitsainier/terminal/main/install.sh | sh
+curl -fsSL https://rohitsainier.github.io/pages/bharatlink/install.sh | sh
 ```
 
 Or with Cargo: `cargo install bharatlink`
